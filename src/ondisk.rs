@@ -1,12 +1,9 @@
 use crate::fs;
+use crate::os::MetadataExt;
 use crate::subs;
 use crate::util;
 use crate::volume;
 
-#[cfg(target_os = "freebsd")]
-use std::os::freebsd::fs::MetadataExt;
-#[cfg(target_os = "linux")]
-use std::os::linux::fs::MetadataExt;
 use std::os::unix::fs::FileTypeExt;
 
 #[derive(Debug, Default)]

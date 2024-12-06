@@ -1,6 +1,9 @@
 use crate::fs;
+use crate::ioctl;
+use crate::os;
 use crate::util;
 
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::FileTypeExt;
 
 pub const K: usize = 1024;
@@ -19,6 +22,24 @@ pub const G_F64: f64 = G as f64;
 pub const T_F64: f64 = T as f64;
 
 const FORCE_STD_EPOCH: &str = "HAMMER2_FORCE_STD_EPOCH";
+
+/// # Errors
+pub fn get_ioctl_handle(sel_path: &str) -> Result<std::fs::File, Box<dyn std::error::Error>> {
+    let f = if sel_path.is_empty() { "." } else { sel_path };
+    let fp = std::fs::File::open(f)?;
+    let mut info = ioctl::Hammer2IocVersion::new();
+    nix::ioctl_readwrite!(
+        version_get,
+        ioctl::HAMMER2IOC,
+        ioctl::HAMMER2IOC_VERSION_GET,
+        ioctl::Hammer2IocVersion
+    );
+    if let Err(e) = unsafe { version_get(fp.as_raw_fd(), &mut info) } {
+        log::error!("'{f}' is not a hammer2 filesystem");
+        return Err(Box::new(e));
+    }
+    Ok(fp)
+}
 
 /// # Panics
 #[must_use]
@@ -53,7 +74,7 @@ fn get_time_string_impl(t: u64, d: i64) -> String {
 }
 
 #[must_use]
-pub fn get_inode_type_string(typ: u8) -> String {
+pub fn get_inode_type_string(typ: u8) -> &'static str {
     match typ {
         fs::HAMMER2_OBJTYPE_UNKNOWN => "UNKNOWN",
         fs::HAMMER2_OBJTYPE_DIRECTORY => "DIR",
@@ -66,11 +87,10 @@ pub fn get_inode_type_string(typ: u8) -> String {
         fs::HAMMER2_OBJTYPE_WHITEOUT => "WHITEOUT",
         _ => "ILLEGAL",
     }
-    .to_string()
 }
 
 #[must_use]
-pub fn get_pfs_type_string(typ: u8) -> String {
+pub fn get_pfs_type_string(typ: u8) -> &'static str {
     match typ {
         fs::HAMMER2_PFSTYPE_NONE => "NONE",
         fs::HAMMER2_PFSTYPE_SUPROOT => "SUPROOT",
@@ -82,22 +102,20 @@ pub fn get_pfs_type_string(typ: u8) -> String {
         fs::HAMMER2_PFSTYPE_MASTER => "MASTER",
         _ => "ILLEGAL",
     }
-    .to_string()
 }
 
 #[must_use]
-pub fn get_pfs_subtype_string(typ: u8) -> String {
+pub fn get_pfs_subtype_string(typ: u8) -> &'static str {
     match typ {
         fs::HAMMER2_PFSSUBTYPE_NONE => "NONE",
         fs::HAMMER2_PFSSUBTYPE_SNAPSHOT => "SNAPSHOT",
         fs::HAMMER2_PFSSUBTYPE_AUTOSNAP => "AUTOSNAP",
         _ => "ILLEGAL",
     }
-    .to_string()
 }
 
 #[must_use]
-pub fn get_blockref_type_string(typ: u8) -> String {
+pub fn get_blockref_type_string(typ: u8) -> &'static str {
     match typ {
         fs::HAMMER2_BREF_TYPE_EMPTY => "empty",
         fs::HAMMER2_BREF_TYPE_INODE => "inode",
@@ -111,11 +129,10 @@ pub fn get_blockref_type_string(typ: u8) -> String {
         fs::HAMMER2_BREF_TYPE_VOLUME => "volume",
         _ => "unknown",
     }
-    .to_string()
 }
 
-const HAMMER2_CHECK_STRINGS: [&str; 5] = ["none", "disabled", "crc32", "xxhash64", "sha192"];
-const HAMMER2_COMP_STRINGS: [&str; 4] = ["none", "autozero", "lz4", "zlib"];
+pub const HAMMER2_CHECK_STRINGS: [&str; 5] = ["none", "disabled", "crc32", "xxhash64", "sha192"];
+pub const HAMMER2_COMP_STRINGS: [&str; 4] = ["none", "autozero", "lz4", "zlib"];
 
 // Note: Check algorithms normally do not encode any level.
 #[must_use]
@@ -174,6 +191,19 @@ pub fn get_size_string(size: u64) -> String {
         format!("{:6.2}GB", size as f64 / G_F64)
     } else {
         format!("{:6.2}TB", size as f64 / T_F64)
+    }
+}
+
+#[must_use]
+pub fn get_count_string(size: u64) -> String {
+    if size < M_U64 / 2 {
+        format!("{size}")
+    } else if size < G_U64 / 2 {
+        format!("{:6.2}M", size as f64 / M_F64)
+    } else if size < T_U64 / 2 {
+        format!("{:6.2}G", size as f64 / G_F64)
+    } else {
+        format!("{:6.2}T", size as f64 / T_F64)
     }
 }
 
@@ -250,6 +280,18 @@ pub fn dirhash(aname: &[u8]) -> u64 {
     // that the values 0x0000-0x7FFF are available for artificial entries
     // ('.' and '..').
     key | 0x8000
+}
+
+/// # Errors
+pub fn get_hammer2_mounts() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut v = vec![];
+    for t in os::get_mnt_info()? {
+        let (fstypename, mntonname, _) = t;
+        if fstypename == "hammer2" {
+            v.push(mntonname);
+        }
+    }
+    Ok(v)
 }
 
 /// # Panics

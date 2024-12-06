@@ -1,4 +1,5 @@
 use crate::fs;
+use crate::ioctl;
 use crate::util;
 
 impl fs::Hammer2Blockref {
@@ -64,6 +65,28 @@ impl fs::Hammer2VolumeData {
         let beg = offset.try_into().unwrap();
         let end = (offset + size).try_into().unwrap();
         icrc32::iscsi_crc32(&voldata[beg..end])
+    }
+}
+
+impl ioctl::Hammer2IocPfs {
+    pub fn copy_name(&mut self, name: &[u8]) {
+        let n = if name.len() > self.name.len() {
+            self.name.len()
+        } else {
+            name.len()
+        };
+        self.name[..n].copy_from_slice(&name[..n]);
+    }
+}
+
+impl ioctl::Hammer2IocDestroy {
+    pub fn copy_path(&mut self, path: &[u8]) {
+        let n = if path.len() > self.path.len() {
+            self.path.len()
+        } else {
+            path.len()
+        };
+        self.path[..n].copy_from_slice(&path[..n]);
     }
 }
 
