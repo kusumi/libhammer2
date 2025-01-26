@@ -252,6 +252,7 @@ impl Hammer2Ondisk {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     fn verify_volumes_2(&self, verify_rootvol: bool) -> std::io::Result<()> {
         // check volume header
         if verify_rootvol {

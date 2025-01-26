@@ -1,3 +1,9 @@
+v0.2.2
+======
+- Add src/lz4.rs
+- Add src/zlib.rs
+- Misc updates
+
 v0.2.1
 ======
 - Add src/ioctl.rs

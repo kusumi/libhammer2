@@ -64,17 +64,13 @@ impl Hammer2Volume {
     }
 
     /// # Errors
-    /// # Panics
     pub fn pread(&mut self, buf: &mut [u8], offset: u64) -> std::io::Result<()> {
-        assert_eq!(offset & fs::HAMMER2_LBUFMASK, 0);
         util::seek_set(&mut self.fp, offset)?;
         self.fp.read_exact(buf)
     }
 
     /// # Errors
-    /// # Panics
     pub fn pwrite(&mut self, buf: &[u8], offset: u64) -> std::io::Result<()> {
-        assert_eq!(offset & fs::HAMMER2_LBUFMASK, 0);
         util::seek_set(&mut self.fp, offset)?;
         self.fp.write_all(buf)
     }

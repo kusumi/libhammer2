@@ -1,7 +1,7 @@
 #[cfg(target_os = "freebsd")]
-pub(crate) mod freebsd;
+mod freebsd;
 #[cfg(target_os = "linux")]
-pub(crate) mod linux;
+mod linux;
 
 #[cfg(target_os = "freebsd")]
 pub use freebsd::*;

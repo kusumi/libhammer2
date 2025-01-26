@@ -8,8 +8,7 @@ pub const HAMMER2_LBUFRADIX: usize = 14; // logical buf (1<<14) bytes
 pub const HAMMER2_LBUFSIZE: u64 = 16384;
 
 pub const HAMMER2_IND_BYTES_MAX: u64 = HAMMER2_PBUFSIZE;
-pub const HAMMER2_IND_COUNT_MAX: usize =
-    HAMMER2_IND_BYTES_MAX as usize / std::mem::size_of::<Hammer2Blockref>();
+pub const HAMMER2_IND_COUNT_MAX: usize = (HAMMER2_IND_BYTES_MAX / HAMMER2_BLOCKREF_BYTES) as usize;
 
 pub const HAMMER2_SET_RADIX: u8 = 2; // radix 2 = 4 entries
 pub const HAMMER2_SET_COUNT: usize = 1 << HAMMER2_SET_RADIX;

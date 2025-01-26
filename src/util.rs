@@ -1,5 +1,14 @@
 use std::io::Seek;
 
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! new_cstring {
+    ($s:expr) => {
+        std::ffi::CString::new($s)
+    };
+}
+pub use new_cstring;
+
 /// # Errors
 pub fn bin_to_string(b: &[u8]) -> Result<String, std::string::FromUtf8Error> {
     let mut v = vec![];
@@ -21,7 +30,8 @@ pub fn get_current_time() -> u64 {
         .as_secs()
 }
 
-pub(crate) fn open(path: &str, readonly: bool) -> std::io::Result<std::fs::File> {
+/// # Errors
+pub fn open(path: &str, readonly: bool) -> std::io::Result<std::fs::File> {
     if readonly {
         std::fs::File::open(path)
     } else {
@@ -32,11 +42,13 @@ pub(crate) fn open(path: &str, readonly: bool) -> std::io::Result<std::fs::File>
     }
 }
 
-pub(crate) fn seek_set(fp: &mut std::fs::File, offset: u64) -> std::io::Result<u64> {
+/// # Errors
+pub fn seek_set(fp: &mut std::fs::File, offset: u64) -> std::io::Result<u64> {
     fp.seek(std::io::SeekFrom::Start(offset))
 }
 
-pub(crate) fn seek_end(fp: &mut std::fs::File, offset: i64) -> std::io::Result<u64> {
+/// # Errors
+pub fn seek_end(fp: &mut std::fs::File, offset: i64) -> std::io::Result<u64> {
     fp.seek(std::io::SeekFrom::End(offset))
 }
 
@@ -85,6 +97,11 @@ pub fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
 #[must_use]
 pub fn notfound() -> std::io::Error {
     std::io::Error::from(std::io::ErrorKind::NotFound)
+}
+
+#[must_use]
+pub fn enoent() -> nix::errno::Errno {
+    nix::errno::Errno::ENOENT
 }
 
 #[must_use]

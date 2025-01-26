@@ -6,6 +6,8 @@ use crate::util;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::FileTypeExt;
 
+pub(crate) const DEBUFSIZE: usize = fs::HAMMER2_PBUFSIZE as usize;
+
 pub const K: usize = 1024;
 pub const M: usize = K * 1024;
 pub const G: usize = M * 1024;
@@ -42,8 +44,7 @@ pub fn get_ioctl_handle(sel_path: &str) -> Result<std::fs::File, Box<dyn std::er
 }
 
 /// # Panics
-#[must_use]
-pub fn get_local_time_string(t: u64) -> String {
+fn get_local_time_delta(t: u64) -> i64 {
     let mut d = i64::from(
         time::UtcOffset::current_local_offset()
             .unwrap()
@@ -52,7 +53,12 @@ pub fn get_local_time_string(t: u64) -> String {
     if t == 0 && std::env::var(FORCE_STD_EPOCH).is_ok() {
         d -= 3600;
     }
-    get_time_string_impl(t, d)
+    d
+}
+
+#[must_use]
+pub fn get_local_time_string(t: u64) -> String {
+    get_time_string_impl(t, get_local_time_delta(t))
 }
 
 #[must_use]

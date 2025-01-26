@@ -1,5 +1,6 @@
 use crate::fs;
 use crate::ioctl;
+use crate::os;
 use crate::util;
 
 impl fs::Hammer2Blockref {
@@ -31,6 +32,28 @@ impl fs::Hammer2Blockset {
             &self.blockref[2],
             &self.blockref[3],
         ]
+    }
+}
+
+impl fs::Hammer2InodeMeta {
+    #[must_use]
+    pub fn ctime_as_timeval(&self) -> libc::timeval {
+        os::new_timeval(self.ctime / 1_000_000, self.ctime % 1_000_000)
+    }
+
+    #[must_use]
+    pub fn atime_as_timeval(&self) -> libc::timeval {
+        os::new_timeval(self.atime / 1_000_000, self.atime % 1_000_000)
+    }
+
+    #[must_use]
+    pub fn mtime_as_timeval(&self) -> libc::timeval {
+        os::new_timeval(self.mtime / 1_000_000, self.mtime % 1_000_000)
+    }
+
+    #[must_use]
+    pub fn get_utimes_timeval(&self) -> [libc::timeval; 2] {
+        [self.atime_as_timeval(), self.mtime_as_timeval()]
     }
 }
 
@@ -200,6 +223,51 @@ mod tests {
         eq!(bset.blockref[1], bset.as_blockref()[1]);
         eq!(bset.blockref[2], bset.as_blockref()[2]);
         eq!(bset.blockref[3], bset.as_blockref()[3]);
+    }
+
+    #[test]
+    fn test_inode_meta_ctime_as_timeval() {
+        let ipmeta = super::fs::Hammer2InodeMeta {
+            ctime: 1_000_001,
+            ..Default::default()
+        };
+        assert_eq!(
+            ipmeta.ctime_as_timeval(),
+            libc::timeval {
+                tv_sec: 1,
+                tv_usec: 1
+            }
+        );
+    }
+
+    #[test]
+    fn test_inode_meta_atime_as_timeval() {
+        let ipmeta = super::fs::Hammer2InodeMeta {
+            atime: 1_000_001,
+            ..Default::default()
+        };
+        assert_eq!(
+            ipmeta.atime_as_timeval(),
+            libc::timeval {
+                tv_sec: 1,
+                tv_usec: 1
+            }
+        );
+    }
+
+    #[test]
+    fn test_inode_meta_mtime_as_timeval() {
+        let ipmeta = super::fs::Hammer2InodeMeta {
+            mtime: 1_000_001,
+            ..Default::default()
+        };
+        assert_eq!(
+            ipmeta.mtime_as_timeval(),
+            libc::timeval {
+                tv_sec: 1,
+                tv_usec: 1
+            }
+        );
     }
 
     #[test]
