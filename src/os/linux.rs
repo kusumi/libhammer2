@@ -114,7 +114,7 @@ pub fn new_timeval(tv_sec: u64, tv_usec: u64) -> libc::timeval {
 
 /// # Errors
 #[allow(clippy::type_complexity)]
-pub fn get_mnt_info() -> Result<Vec<(String, String, String)>, Box<dyn std::error::Error>> {
+pub fn get_mnt_info() -> Result<Vec<(String, String, String)>, std::string::FromUtf8Error> {
     Ok(vec![])
 }
 

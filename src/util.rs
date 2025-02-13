@@ -11,23 +11,20 @@ pub use new_cstring;
 
 /// # Errors
 pub fn bin_to_string(b: &[u8]) -> Result<String, std::string::FromUtf8Error> {
-    let mut v = vec![];
-    for x in b {
-        if *x == 0 {
-            break;
+    String::from_utf8(
+        match b.iter().position(|&x| x == 0) {
+            Some(v) => &b[..v],
+            None => b,
         }
-        v.push(*x);
-    }
-    String::from_utf8(v)
+        .to_vec(),
+    )
 }
 
-/// # Panics
-#[must_use]
-pub fn get_current_time() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
+/// # Errors
+pub fn get_current_time() -> Result<u64, std::time::SystemTimeError> {
+    Ok(std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs())
 }
 
 /// # Errors
@@ -95,16 +92,6 @@ pub fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
 }
 
 #[must_use]
-pub fn notfound() -> std::io::Error {
-    std::io::Error::from(std::io::ErrorKind::NotFound)
-}
-
-#[must_use]
-pub fn enoent() -> nix::errno::Errno {
-    nix::errno::Errno::ENOENT
-}
-
-#[must_use]
 pub fn get_os_name() -> &'static str {
     std::env::consts::OS
 }
@@ -156,8 +143,14 @@ mod tests {
 
     #[test]
     fn test_get_current_time() {
-        let t1 = super::get_current_time();
-        let t2 = super::get_current_time();
+        let t1 = match super::get_current_time() {
+            Ok(v) => v,
+            Err(e) => panic!("{e}"),
+        };
+        let t2 = match super::get_current_time() {
+            Ok(v) => v,
+            Err(e) => panic!("{e}"),
+        };
         assert_ne!(t1, 0);
         assert_ne!(t2, 0);
         assert!(t2 >= t1);

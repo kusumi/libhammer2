@@ -1,12 +1,6 @@
-use crate::fs;
-use crate::ioctl;
-use crate::os;
-use crate::util;
-
-use std::os::fd::AsRawFd;
 use std::os::unix::fs::FileTypeExt;
 
-pub(crate) const DEBUFSIZE: usize = fs::HAMMER2_PBUFSIZE as usize;
+pub(crate) const DEBUFSIZE: usize = crate::fs::HAMMER2_PBUFSIZE as usize;
 
 pub const K: usize = 1024;
 pub const M: usize = K * 1024;
@@ -25,72 +19,51 @@ pub const T_F64: f64 = T as f64;
 
 const FORCE_STD_EPOCH: &str = "HAMMER2_FORCE_STD_EPOCH";
 
-/// # Errors
-pub fn get_ioctl_handle(sel_path: &str) -> Result<std::fs::File, Box<dyn std::error::Error>> {
-    let f = if sel_path.is_empty() { "." } else { sel_path };
-    let fp = std::fs::File::open(f)?;
-    let mut info = ioctl::Hammer2IocVersion::new();
-    nix::ioctl_readwrite!(
-        version_get,
-        ioctl::HAMMER2IOC,
-        ioctl::HAMMER2IOC_VERSION_GET,
-        ioctl::Hammer2IocVersion
-    );
-    if let Err(e) = unsafe { version_get(fp.as_raw_fd(), &mut info) } {
-        log::error!("'{f}' is not a hammer2 filesystem");
-        return Err(Box::new(e));
-    }
-    Ok(fp)
-}
-
-/// # Panics
-fn get_local_time_delta(t: u64) -> i64 {
-    let mut d = i64::from(
-        time::UtcOffset::current_local_offset()
-            .unwrap()
-            .whole_seconds(),
-    );
+fn get_local_time_delta(t: u64) -> Result<i64, time::error::IndeterminateOffset> {
+    let mut d = i64::from(time::UtcOffset::current_local_offset()?.whole_seconds());
     if t == 0 && std::env::var(FORCE_STD_EPOCH).is_ok() {
         d -= 3600;
     }
-    d
+    Ok(d)
 }
 
+/// # Panics
 #[must_use]
 pub fn get_local_time_string(t: u64) -> String {
-    get_time_string_impl(t, get_local_time_delta(t))
+    get_time_string_impl(t, get_local_time_delta(t).unwrap()).unwrap()
 }
 
+/// # Panics
 #[must_use]
 pub fn get_time_string(t: u64) -> String {
-    get_time_string_impl(t, 0)
+    get_time_string_impl(t, 0).unwrap()
 }
 
-fn get_time_string_impl(t: u64, d: i64) -> String {
-    let t = i64::try_from(t / 1_000_000).unwrap() + d;
+fn get_time_string_impl(t: u64, d: i64) -> Result<String, Box<dyn std::error::Error>> {
+    let t = i64::try_from(t / 1_000_000)? + d;
     let t = if t < 0 {
-        std::time::SystemTime::UNIX_EPOCH - std::time::Duration::from_secs((-t).try_into().unwrap())
+        std::time::SystemTime::UNIX_EPOCH - std::time::Duration::from_secs((-t).try_into()?)
     } else {
-        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(t.try_into().unwrap())
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(t.try_into()?)
     };
-    let fmt =
-        time::format_description::parse("[day]-[month repr:short]-[year] [hour]:[minute]:[second]")
-            .unwrap();
-    time::OffsetDateTime::from(t).format(&fmt).unwrap()
+    let fmt = time::format_description::parse(
+        "[day]-[month repr:short]-[year] [hour]:[minute]:[second]",
+    )?;
+    Ok(time::OffsetDateTime::from(t).format(&fmt)?)
 }
 
 #[must_use]
 pub fn get_inode_type_string(typ: u8) -> &'static str {
     match typ {
-        fs::HAMMER2_OBJTYPE_UNKNOWN => "UNKNOWN",
-        fs::HAMMER2_OBJTYPE_DIRECTORY => "DIR",
-        fs::HAMMER2_OBJTYPE_REGFILE => "FILE",
-        fs::HAMMER2_OBJTYPE_FIFO => "FIFO",
-        fs::HAMMER2_OBJTYPE_CDEV => "CDEV",
-        fs::HAMMER2_OBJTYPE_BDEV => "BDEV",
-        fs::HAMMER2_OBJTYPE_SOFTLINK => "SOFTLINK",
-        fs::HAMMER2_OBJTYPE_SOCKET => "SOCKET",
-        fs::HAMMER2_OBJTYPE_WHITEOUT => "WHITEOUT",
+        crate::fs::HAMMER2_OBJTYPE_UNKNOWN => "UNKNOWN",
+        crate::fs::HAMMER2_OBJTYPE_DIRECTORY => "DIR",
+        crate::fs::HAMMER2_OBJTYPE_REGFILE => "FILE",
+        crate::fs::HAMMER2_OBJTYPE_FIFO => "FIFO",
+        crate::fs::HAMMER2_OBJTYPE_CDEV => "CDEV",
+        crate::fs::HAMMER2_OBJTYPE_BDEV => "BDEV",
+        crate::fs::HAMMER2_OBJTYPE_SOFTLINK => "SOFTLINK",
+        crate::fs::HAMMER2_OBJTYPE_SOCKET => "SOCKET",
+        crate::fs::HAMMER2_OBJTYPE_WHITEOUT => "WHITEOUT",
         _ => "ILLEGAL",
     }
 }
@@ -98,14 +71,14 @@ pub fn get_inode_type_string(typ: u8) -> &'static str {
 #[must_use]
 pub fn get_pfs_type_string(typ: u8) -> &'static str {
     match typ {
-        fs::HAMMER2_PFSTYPE_NONE => "NONE",
-        fs::HAMMER2_PFSTYPE_SUPROOT => "SUPROOT",
-        fs::HAMMER2_PFSTYPE_DUMMY => "DUMMY",
-        fs::HAMMER2_PFSTYPE_CACHE => "CACHE",
-        fs::HAMMER2_PFSTYPE_SLAVE => "SLAVE",
-        fs::HAMMER2_PFSTYPE_SOFT_SLAVE => "SOFT_SLAVE",
-        fs::HAMMER2_PFSTYPE_SOFT_MASTER => "SOFT_MASTER",
-        fs::HAMMER2_PFSTYPE_MASTER => "MASTER",
+        crate::fs::HAMMER2_PFSTYPE_NONE => "NONE",
+        crate::fs::HAMMER2_PFSTYPE_SUPROOT => "SUPROOT",
+        crate::fs::HAMMER2_PFSTYPE_DUMMY => "DUMMY",
+        crate::fs::HAMMER2_PFSTYPE_CACHE => "CACHE",
+        crate::fs::HAMMER2_PFSTYPE_SLAVE => "SLAVE",
+        crate::fs::HAMMER2_PFSTYPE_SOFT_SLAVE => "SOFT_SLAVE",
+        crate::fs::HAMMER2_PFSTYPE_SOFT_MASTER => "SOFT_MASTER",
+        crate::fs::HAMMER2_PFSTYPE_MASTER => "MASTER",
         _ => "ILLEGAL",
     }
 }
@@ -113,9 +86,9 @@ pub fn get_pfs_type_string(typ: u8) -> &'static str {
 #[must_use]
 pub fn get_pfs_subtype_string(typ: u8) -> &'static str {
     match typ {
-        fs::HAMMER2_PFSSUBTYPE_NONE => "NONE",
-        fs::HAMMER2_PFSSUBTYPE_SNAPSHOT => "SNAPSHOT",
-        fs::HAMMER2_PFSSUBTYPE_AUTOSNAP => "AUTOSNAP",
+        crate::fs::HAMMER2_PFSSUBTYPE_NONE => "NONE",
+        crate::fs::HAMMER2_PFSSUBTYPE_SNAPSHOT => "SNAPSHOT",
+        crate::fs::HAMMER2_PFSSUBTYPE_AUTOSNAP => "AUTOSNAP",
         _ => "ILLEGAL",
     }
 }
@@ -123,16 +96,16 @@ pub fn get_pfs_subtype_string(typ: u8) -> &'static str {
 #[must_use]
 pub fn get_blockref_type_string(typ: u8) -> &'static str {
     match typ {
-        fs::HAMMER2_BREF_TYPE_EMPTY => "empty",
-        fs::HAMMER2_BREF_TYPE_INODE => "inode",
-        fs::HAMMER2_BREF_TYPE_INDIRECT => "indirect",
-        fs::HAMMER2_BREF_TYPE_DATA => "data",
-        fs::HAMMER2_BREF_TYPE_DIRENT => "dirent",
-        fs::HAMMER2_BREF_TYPE_FREEMAP_NODE => "freemap_node",
-        fs::HAMMER2_BREF_TYPE_FREEMAP_LEAF => "freemap_leaf",
-        fs::HAMMER2_BREF_TYPE_INVALID => "invalid",
-        fs::HAMMER2_BREF_TYPE_FREEMAP => "freemap",
-        fs::HAMMER2_BREF_TYPE_VOLUME => "volume",
+        crate::fs::HAMMER2_BREF_TYPE_EMPTY => "empty",
+        crate::fs::HAMMER2_BREF_TYPE_INODE => "inode",
+        crate::fs::HAMMER2_BREF_TYPE_INDIRECT => "indirect",
+        crate::fs::HAMMER2_BREF_TYPE_DATA => "data",
+        crate::fs::HAMMER2_BREF_TYPE_DIRENT => "dirent",
+        crate::fs::HAMMER2_BREF_TYPE_FREEMAP_NODE => "freemap_node",
+        crate::fs::HAMMER2_BREF_TYPE_FREEMAP_LEAF => "freemap_leaf",
+        crate::fs::HAMMER2_BREF_TYPE_INVALID => "invalid",
+        crate::fs::HAMMER2_BREF_TYPE_FREEMAP => "freemap",
+        crate::fs::HAMMER2_BREF_TYPE_VOLUME => "volume",
         _ => "unknown",
     }
 }
@@ -143,8 +116,8 @@ pub const HAMMER2_COMP_STRINGS: [&str; 4] = ["none", "autozero", "lz4", "zlib"];
 // Note: Check algorithms normally do not encode any level.
 #[must_use]
 pub fn get_check_mode_string(x: u8) -> String {
-    let check = usize::from(fs::dec_algo(x));
-    let level = fs::dec_level(x);
+    let check = usize::from(crate::fs::dec_algo(x));
+    let level = crate::fs::dec_level(x);
     if level != 0 {
         if check < HAMMER2_CHECK_STRINGS.len() {
             format!("{}:{level}", HAMMER2_CHECK_STRINGS[check])
@@ -165,8 +138,8 @@ pub fn get_check_mode_string(x: u8) -> String {
 
 #[must_use]
 pub fn get_comp_mode_string(x: u8) -> String {
-    let comp = usize::from(fs::dec_algo(x));
-    let level = fs::dec_level(x);
+    let comp = usize::from(crate::fs::dec_algo(x));
+    let level = crate::fs::dec_level(x);
     if level != 0 {
         if comp < HAMMER2_COMP_STRINGS.len() {
             format!("{}:{level}", HAMMER2_COMP_STRINGS[comp])
@@ -214,30 +187,30 @@ pub fn get_count_string(size: u64) -> String {
 }
 
 /// # Errors
-pub fn get_volume_size_from_path(f: &str) -> std::io::Result<u64> {
+pub fn get_volume_size_from_path(f: &str) -> crate::Result<u64> {
     get_volume_size(&mut std::fs::File::open(f)?)
 }
 
 /// # Errors
-pub fn get_volume_size(fp: &mut std::fs::File) -> std::io::Result<u64> {
+pub fn get_volume_size(fp: &mut std::fs::File) -> crate::Result<u64> {
     let t = fp.metadata()?.file_type();
     if !t.is_block_device() && !t.is_char_device() && !t.is_file() {
         log::error!("{fp:?}: unsupported type {t:?}");
-        return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+        return Err(nix::errno::Errno::EINVAL.into());
     }
 
-    if util::is_linux() || util::is_freebsd() || util::is_solaris() {
-        let size = util::seek_end(fp, 0)?;
+    if crate::util::is_linux() || crate::util::is_freebsd() || crate::util::is_solaris() {
+        let size = crate::util::seek_end(fp, 0)?;
         if size == 0 {
             log::error!("{fp:?}: failed to get size");
-            return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+            return Err(nix::errno::Errno::EINVAL.into());
         }
-        util::seek_set(fp, 0)?;
+        crate::util::seek_set(fp, 0)?;
         Ok(size)
     } else {
         // XXX other platforms use ioctl(2)
-        log::error!("{} is unsupported", util::get_os_name());
-        Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
+        log::error!("{} is unsupported", crate::util::get_os_name());
+        Err(nix::errno::Errno::EOPNOTSUPP.into())
     }
 }
 
@@ -289,9 +262,9 @@ pub fn dirhash(aname: &[u8]) -> u64 {
 }
 
 /// # Errors
-pub fn get_hammer2_mounts() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+pub fn get_hammer2_mounts() -> Result<Vec<String>, std::string::FromUtf8Error> {
     let mut v = vec![];
-    for t in os::get_mnt_info()? {
+    for t in crate::os::get_mnt_info()? {
         let (fstypename, mntonname, _) = t;
         if fstypename == "hammer2" {
             v.push(mntonname);
@@ -300,10 +273,9 @@ pub fn get_hammer2_mounts() -> Result<Vec<String>, Box<dyn std::error::Error>> {
     Ok(v)
 }
 
-/// # Panics
-#[must_use]
-pub fn get_uuid_from_str(s: &str) -> uuid::Uuid {
-    let src = *uuid::Uuid::parse_str(s).unwrap().as_bytes();
+/// # Errors
+pub fn get_uuid_from_str(s: &str) -> Result<uuid::Uuid, uuid::Error> {
+    let src = *uuid::Uuid::parse_str(s)?.as_bytes();
     let mut dst = src;
     dst[0] = src[3]; // 4
     dst[1] = src[2];
@@ -313,7 +285,7 @@ pub fn get_uuid_from_str(s: &str) -> uuid::Uuid {
     dst[5] = src[4];
     dst[6] = src[7]; // 2
     dst[7] = src[6];
-    uuid::Uuid::from_bytes(dst)
+    Ok(uuid::Uuid::from_bytes(dst))
 }
 
 #[must_use]
@@ -346,9 +318,6 @@ pub fn get_chars_per_line() -> usize {
 
 #[cfg(test)]
 mod tests {
-    use crate::fs;
-    use crate::util;
-
     #[test]
     fn test_get_time_string() {
         assert_eq!(super::get_time_string(0), "01-Jan-1970 00:00:00");
@@ -358,20 +327,26 @@ mod tests {
     #[test]
     fn test_get_time_string_impl() {
         assert_eq!(
-            super::get_time_string_impl(0, -25200),
+            match super::get_time_string_impl(0, -25200) {
+                Ok(v) => v,
+                Err(e) => panic!("{e}"),
+            },
             "31-Dec-1969 17:00:00".to_string()
         ); // -7
         assert_eq!(
-            super::get_time_string_impl(0, 32400),
+            match super::get_time_string_impl(0, 32400) {
+                Ok(v) => v,
+                Err(e) => panic!("{e}"),
+            },
             "01-Jan-1970 09:00:00".to_string()
         ); // +9
     }
 
     #[test]
     fn test_get_check_mode_string() {
-        let l1 = fs::enc_level(1);
-        let l0 = fs::enc_level(0);
-        let def_algo = fs::enc_algo(fs::HAMMER2_CHECK_DEFAULT);
+        let l1 = crate::fs::enc_level(1);
+        let l0 = crate::fs::enc_level(0);
+        let def_algo = crate::fs::enc_algo(crate::fs::HAMMER2_CHECK_DEFAULT);
         assert_eq!(super::get_check_mode_string(l1 | def_algo), "xxhash64:1");
         assert_eq!(super::get_check_mode_string(l1 | 0xf), "unknown(15):1");
         assert_eq!(super::get_check_mode_string(l0 | def_algo), "xxhash64");
@@ -380,9 +355,9 @@ mod tests {
 
     #[test]
     fn test_get_comp_mode_string() {
-        let l1 = fs::enc_level(1);
-        let l0 = fs::enc_level(0);
-        let def_algo = fs::enc_algo(fs::HAMMER2_COMP_DEFAULT);
+        let l1 = crate::fs::enc_level(1);
+        let l0 = crate::fs::enc_level(0);
+        let def_algo = crate::fs::enc_algo(crate::fs::HAMMER2_COMP_DEFAULT);
         assert_eq!(super::get_comp_mode_string(l1 | def_algo), "lz4:1");
         assert_eq!(super::get_comp_mode_string(l1 | 0xf), "unknown(15):1");
         assert_eq!(super::get_comp_mode_string(l0 | def_algo), "lz4:default");
@@ -426,20 +401,23 @@ mod tests {
 
     #[test]
     fn test_uuid() {
-        let u = match uuid::Uuid::parse_str(fs::HAMMER2_UUID_STRING) {
+        let u = match uuid::Uuid::parse_str(crate::fs::HAMMER2_UUID_STRING) {
             Ok(v) => v,
             Err(e) => panic!("{e}"),
         };
-        assert_eq!(u.to_string(), fs::HAMMER2_UUID_STRING);
+        assert_eq!(u.to_string(), crate::fs::HAMMER2_UUID_STRING);
     }
 
     #[test]
     fn test_uuid_wrapper() {
-        let u = super::get_uuid_from_str(fs::HAMMER2_UUID_STRING);
-        assert_eq!(super::get_uuid_string(&u), fs::HAMMER2_UUID_STRING);
+        let u = match super::get_uuid_from_str(crate::fs::HAMMER2_UUID_STRING) {
+            Ok(v) => v,
+            Err(e) => panic!("{e}"),
+        };
+        assert_eq!(super::get_uuid_string(&u), crate::fs::HAMMER2_UUID_STRING);
         assert_eq!(
-            super::get_uuid_string_from_bytes(util::any_as_u8_slice(&u)),
-            fs::HAMMER2_UUID_STRING
+            super::get_uuid_string_from_bytes(crate::util::any_as_u8_slice(&u)),
+            crate::fs::HAMMER2_UUID_STRING
         );
     }
 

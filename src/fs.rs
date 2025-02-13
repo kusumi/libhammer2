@@ -1,4 +1,5 @@
-pub const HAMMER2_RADIX_MIN: u8 = 10; // minimum allocation size 2^N
+pub const HAMMER2_ALLOC_MIN: usize = 1024; // minimum allocation size
+pub const HAMMER2_RADIX_MIN: usize = 10; // minimum allocation size 2^N
 
 pub const HAMMER2_SEGSIZE: u64 = 1 << HAMMER2_FREEMAP_LEVEL0_RADIX;
 
@@ -10,7 +11,7 @@ pub const HAMMER2_LBUFSIZE: u64 = 16384;
 pub const HAMMER2_IND_BYTES_MAX: u64 = HAMMER2_PBUFSIZE;
 pub const HAMMER2_IND_COUNT_MAX: usize = (HAMMER2_IND_BYTES_MAX / HAMMER2_BLOCKREF_BYTES) as usize;
 
-pub const HAMMER2_SET_RADIX: u8 = 2; // radix 2 = 4 entries
+pub const HAMMER2_SET_RADIX: usize = 2; // radix 2 = 4 entries
 pub const HAMMER2_SET_COUNT: usize = 1 << HAMMER2_SET_RADIX;
 pub const HAMMER2_EMBEDDED_BYTES: u64 = 512; // inode blockset/dd size
 
@@ -579,7 +580,10 @@ mod tests {
         assert_eq!(std::mem::size_of::<super::Hammer2Blockref>(), 128);
         assert_eq!(
             std::mem::size_of::<super::Hammer2Blockref>(),
-            super::HAMMER2_BLOCKREF_BYTES.try_into().unwrap()
+            match super::HAMMER2_BLOCKREF_BYTES.try_into() {
+                Ok(v) => v,
+                Err(e) => panic!("{e}"),
+            }
         );
         assert_eq!(super::HAMMER2_BREF_TYPE_EMPTY, 0);
     }
@@ -629,7 +633,10 @@ mod tests {
         assert_eq!(std::mem::size_of::<super::Hammer2InodeData>(), 1024);
         assert_eq!(
             std::mem::size_of::<super::Hammer2InodeData>(),
-            super::HAMMER2_INODE_BYTES.try_into().unwrap()
+            match super::HAMMER2_INODE_BYTES.try_into() {
+                Ok(v) => v,
+                Err(e) => panic!("{e}"),
+            }
         );
     }
 
@@ -638,7 +645,10 @@ mod tests {
         assert_eq!(std::mem::size_of::<super::Hammer2VolumeData>(), 65536);
         assert_eq!(
             std::mem::size_of::<super::Hammer2VolumeData>(),
-            super::HAMMER2_VOLUME_BYTES.try_into().unwrap()
+            match super::HAMMER2_VOLUME_BYTES.try_into() {
+                Ok(v) => v,
+                Err(e) => panic!("{e}"),
+            }
         );
     }
 }

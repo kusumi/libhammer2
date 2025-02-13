@@ -12,9 +12,12 @@ pub fn decompress(buf: &[u8], max_size: usize) -> Result<Vec<u8>, Box<dyn std::e
 
 #[cfg(test)]
 mod tests {
-    use crate::subs::DEBUFSIZE;
-
-    const INPUT: [&[u8]; 4] = [b"x", b"HAMMER2", b"hammer2", &[0x41; DEBUFSIZE]];
+    const INPUT: [&[u8]; 4] = [
+        b"x",
+        b"HAMMER2",
+        b"hammer2",
+        &[0x41; crate::subs::DEBUFSIZE],
+    ];
 
     #[test]
     fn test_compress_decompress() {
@@ -24,7 +27,7 @@ mod tests {
                     Ok(v) => v,
                     Err(e) => panic!("{e}:{b:?}:{level}"),
                 };
-                let d = match super::decompress(&c, DEBUFSIZE) {
+                let d = match super::decompress(&c, crate::subs::DEBUFSIZE) {
                     Ok(v) => v,
                     Err(e) => panic!("{e}:{b:?}:{level}"),
                 };

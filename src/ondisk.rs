@@ -1,61 +1,55 @@
-use crate::fs;
 use crate::os::MetadataExt;
-use crate::subs;
-use crate::util;
-use crate::volume;
-
 use std::os::unix::fs::FileTypeExt;
 
 #[derive(Debug, Default)]
-struct Hammer2VolumeIdentifier {
+struct VolumeIdentifier {
     version: u32,
     nvolumes: u8,
     fsid: [u8; 16],
     fstype: [u8; 16],
 }
 
-impl Hammer2VolumeIdentifier {
+impl VolumeIdentifier {
     fn new(version: Option<u32>) -> Self {
         Self {
-            version: version.unwrap_or(fs::HAMMER2_VOL_VERSION_DEFAULT),
+            version: version.unwrap_or(crate::fs::HAMMER2_VOL_VERSION_DEFAULT),
             ..Default::default()
         }
     }
 }
 
 #[derive(Debug, Default)]
-pub struct Hammer2Ondisk {
-    volumes: Vec<volume::Hammer2Volume>,
+pub struct Ondisk {
+    volumes: Vec<crate::volume::Volume>,
     total_size: u64,
-    ident: Hammer2VolumeIdentifier, // mostly unused by newfs_hammer2
+    ident: VolumeIdentifier, // mostly unused by newfs_hammer2
 }
 
-impl std::ops::Index<usize> for Hammer2Ondisk {
-    type Output = volume::Hammer2Volume;
+impl std::ops::Index<usize> for Ondisk {
+    type Output = crate::volume::Volume;
     fn index(&self, i: usize) -> &Self::Output {
         self.volumes.index(i)
     }
 }
 
-impl std::ops::IndexMut<usize> for Hammer2Ondisk {
-    fn index_mut(&mut self, i: usize) -> &mut volume::Hammer2Volume {
+impl std::ops::IndexMut<usize> for Ondisk {
+    fn index_mut(&mut self, i: usize) -> &mut crate::volume::Volume {
         self.volumes.index_mut(i)
     }
 }
 
-impl Hammer2Ondisk {
+impl Ondisk {
     #[must_use]
     pub fn new(version: Option<u32>) -> Self {
         Self {
-            ident: Hammer2VolumeIdentifier::new(version),
+            ident: VolumeIdentifier::new(version),
             ..Default::default()
         }
     }
 
-    /// # Panics
     #[must_use]
-    pub fn get_nvolumes(&self) -> u8 {
-        self.volumes.len().try_into().unwrap()
+    pub fn get_nvolumes(&self) -> usize {
+        self.volumes.len()
     }
 
     #[must_use]
@@ -71,33 +65,32 @@ impl Hammer2Ondisk {
         readonly: bool,
         offset: u64,
         size: u64,
-    ) -> std::io::Result<()> {
-        let vol = volume::Hammer2Volume::new(id, path, readonly, offset, size)?;
+    ) -> crate::Result<()> {
+        let vol = crate::volume::Volume::new(id, path, readonly, offset, size)?;
         self.volumes.push(vol);
-        self.volumes
-            .sort_by_key(super::volume::Hammer2Volume::get_id);
+        self.volumes.sort_by_key(crate::volume::Volume::get_id);
         self.total_size += size;
         Ok(())
     }
 
     /// # Errors
-    pub fn add_volume(&mut self, path: &str, readonly: bool) -> std::io::Result<()> {
+    pub fn add_volume(&mut self, path: &str, readonly: bool) -> crate::Result<()> {
         let t = std::fs::metadata(path)?.file_type();
         if !t.is_block_device() && !t.is_char_device() && !t.is_file() {
             log::error!("Unsupported file type {t:?}");
-            return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+            return Err(nix::errno::Errno::EINVAL.into());
         }
-        if self.volumes.len() >= fs::HAMMER2_MAX_VOLUMES.into() {
+        if self.volumes.len() >= crate::fs::HAMMER2_MAX_VOLUMES.into() {
             log::error!(
                 "Exceeds maximum supported number of volumes {}",
-                fs::HAMMER2_MAX_VOLUMES
+                crate::fs::HAMMER2_MAX_VOLUMES
             );
-            return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+            return Err(nix::errno::Errno::EINVAL.into());
         }
-        let voldata = volume::read_volume_data(path)?;
-        if voldata.volu_id >= fs::HAMMER2_MAX_VOLUMES {
+        let voldata = crate::volume::read_volume_data(path)?;
+        if voldata.volu_id >= crate::fs::HAMMER2_MAX_VOLUMES {
             log::error!("{path} has bad volume id {}", voldata.volu_id);
-            return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+            return Err(nix::errno::Errno::EINVAL.into());
         }
         // all headers must have the same version, nvolumes and uuid
         if self.ident.nvolumes == 0 {
@@ -112,7 +105,7 @@ impl Hammer2Ondisk {
                     self.ident.version,
                     voldata.version
                 );
-                return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                return Err(nix::errno::Errno::EINVAL.into());
             }
             if self.ident.nvolumes != voldata.nvolumes {
                 log::error!(
@@ -120,7 +113,7 @@ impl Hammer2Ondisk {
                     self.ident.nvolumes,
                     voldata.nvolumes
                 );
-                return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                return Err(nix::errno::Errno::EINVAL.into());
             }
             if self.ident.fsid != voldata.fsid {
                 log::error!(
@@ -128,7 +121,7 @@ impl Hammer2Ondisk {
                     self.ident.fsid,
                     voldata.fsid
                 );
-                return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                return Err(nix::errno::Errno::EINVAL.into());
             }
             if self.ident.fstype != voldata.fstype {
                 log::error!(
@@ -136,7 +129,7 @@ impl Hammer2Ondisk {
                     self.ident.fstype,
                     voldata.fstype
                 );
-                return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                return Err(nix::errno::Errno::EINVAL.into());
             }
         }
         // all per-volume tests passed
@@ -150,40 +143,42 @@ impl Hammer2Ondisk {
         Ok(())
     }
 
-    fn verify_volumes_common(&self, verify_rootvol: bool) -> std::io::Result<()> {
+    fn verify_volumes_common(&self, verify_rootvol: bool) -> crate::Result<()> {
         // check volume header
         if verify_rootvol {
             let rootvoldata = self.read_root_volume_data()?;
-            if rootvoldata.volu_id != fs::HAMMER2_ROOT_VOLUME {
+            if rootvoldata.volu_id != crate::fs::HAMMER2_ROOT_VOLUME {
                 log::error!(
                     "Volume id {} must be {}",
                     rootvoldata.volu_id,
-                    fs::HAMMER2_ROOT_VOLUME
+                    crate::fs::HAMMER2_ROOT_VOLUME
                 );
-                return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                return Err(nix::errno::Errno::EINVAL.into());
             }
-            if subs::get_uuid_string_from_bytes(&rootvoldata.fstype) != fs::HAMMER2_UUID_STRING {
+            if crate::subs::get_uuid_string_from_bytes(&rootvoldata.fstype)
+                != crate::fs::HAMMER2_UUID_STRING
+            {
                 log::error!(
                     "Volume fstype UUID {:?} must be {}",
                     rootvoldata.fstype,
-                    fs::HAMMER2_UUID_STRING
+                    crate::fs::HAMMER2_UUID_STRING
                 );
-                return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                return Err(nix::errno::Errno::EINVAL.into());
             }
         }
         let mut st = vec![];
         for (i, vol) in self.volumes.iter().enumerate() {
-            assert!(vol.get_id() < fs::HAMMER2_MAX_VOLUMES);
+            assert!(vol.get_id() < crate::fs::HAMMER2_MAX_VOLUMES.into());
             // check volumes are unique
             st.push(std::fs::metadata(vol.get_path())?);
             for j in 0..i {
                 if st[i].st_ino() == st[j].st_ino() && st[i].st_dev() == st[j].st_dev() {
                     log::error!("{} specified more than once", vol.get_path());
-                    return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                    return Err(nix::errno::Errno::EINVAL.into());
                 }
             }
             // check volume size vs block device size
-            let size = subs::get_volume_size_from_path(vol.get_path())?;
+            let size = crate::subs::get_volume_size_from_path(vol.get_path())?;
             println!("checkvolu header {i} {:016x}/{:016x}", vol.get_size(), size);
             if vol.get_size() > size {
                 log::error!(
@@ -192,46 +187,46 @@ impl Hammer2Ondisk {
                     vol.get_size(),
                     size
                 );
-                return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                return Err(nix::errno::Errno::EINVAL.into());
             }
             if vol.get_size() == 0 {
                 log::error!("{} has size of 0", vol.get_path());
-                return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                return Err(nix::errno::Errno::EINVAL.into());
             }
         }
         Ok(())
     }
 
-    fn verify_volumes_1(&self, verify_rootvol: bool) -> std::io::Result<()> {
+    fn verify_volumes_1(&self, verify_rootvol: bool) -> crate::Result<()> {
         // check initialized volume count
         if self.volumes.len() != 1 {
             log::error!("Only 1 volume supported");
-            return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+            return Err(nix::errno::Errno::EINVAL.into());
         }
         // check volume header
         if verify_rootvol {
             let rootvoldata = self.read_root_volume_data()?;
             if rootvoldata.nvolumes != 0 {
                 log::error!("Volume count {} must be 0", rootvoldata.nvolumes);
-                return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                return Err(nix::errno::Errno::EINVAL.into());
             }
             if rootvoldata.total_size != 0 {
                 log::error!("Total size {:#018x} must be 0", rootvoldata.total_size);
-                return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                return Err(nix::errno::Errno::EINVAL.into());
             }
-            for i in 0..fs::HAMMER2_MAX_VOLUMES.into() {
+            for i in 0..crate::fs::HAMMER2_MAX_VOLUMES.into() {
                 let off = rootvoldata.volu_loff[i];
                 if off != 0 {
                     log::error!("Volume offset[{}] {:#018x} must be 0", i, off);
-                    return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                    return Err(nix::errno::Errno::EINVAL.into());
                 }
             }
         }
         // check volume
-        let vol = &self.volumes[usize::from(fs::HAMMER2_ROOT_VOLUME)];
+        let vol = &self.volumes[usize::from(crate::fs::HAMMER2_ROOT_VOLUME)];
         if vol.get_id() != 0 {
             log::error!("{} has non zero id {}", vol.get_path(), vol.get_id());
-            return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+            return Err(nix::errno::Errno::EINVAL.into());
         }
         if vol.get_offset() != 0 {
             log::error!(
@@ -239,32 +234,32 @@ impl Hammer2Ondisk {
                 vol.get_path(),
                 vol.get_offset()
             );
-            return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+            return Err(nix::errno::Errno::EINVAL.into());
         }
-        if vol.get_size() & fs::HAMMER2_VOLUME_ALIGNMASK != 0 {
+        if vol.get_size() & crate::fs::HAMMER2_VOLUME_ALIGNMASK != 0 {
             log::error!(
                 "{}'s size is not {:#018x} aligned",
                 vol.get_path(),
-                fs::HAMMER2_VOLUME_ALIGN
+                crate::fs::HAMMER2_VOLUME_ALIGN
             );
-            return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+            return Err(nix::errno::Errno::EINVAL.into());
         }
         Ok(())
     }
 
     #[allow(clippy::too_many_lines)]
-    fn verify_volumes_2(&self, verify_rootvol: bool) -> std::io::Result<()> {
+    fn verify_volumes_2(&self, verify_rootvol: bool) -> crate::Result<()> {
         // check volume header
         if verify_rootvol {
             let rootvoldata = self.read_root_volume_data()?;
             let nvolumes = self.get_nvolumes();
-            if rootvoldata.nvolumes != nvolumes {
+            if usize::from(rootvoldata.nvolumes) != nvolumes {
                 log::error!(
                     "Volume header requires {} devices, {} specified",
                     rootvoldata.nvolumes,
                     nvolumes
                 );
-                return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                return Err(nix::errno::Errno::EINVAL.into());
             }
             if rootvoldata.total_size != self.total_size {
                 log::error!(
@@ -272,10 +267,10 @@ impl Hammer2Ondisk {
                     rootvoldata.total_size,
                     self.total_size
                 );
-                return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                return Err(nix::errno::Errno::EINVAL.into());
             }
             for i in 0..nvolumes {
-                let off = rootvoldata.volu_loff[usize::from(i)];
+                let off = rootvoldata.volu_loff[i];
                 if off == u64::MAX {
                     log::error!(
                         "Volume offset[{}] {:#018x} must not be {:#018x}",
@@ -283,11 +278,11 @@ impl Hammer2Ondisk {
                         off,
                         u64::MAX
                     );
-                    return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                    return Err(nix::errno::Errno::EINVAL.into());
                 }
             }
-            for i in nvolumes..fs::HAMMER2_MAX_VOLUMES {
-                let off = rootvoldata.volu_loff[usize::from(i)];
+            for i in nvolumes..crate::fs::HAMMER2_MAX_VOLUMES.into() {
+                let off = rootvoldata.volu_loff[i];
                 if off != u64::MAX {
                     log::error!(
                         "Volume offset[{}] {:#018x} must be {:#018x}",
@@ -295,20 +290,20 @@ impl Hammer2Ondisk {
                         off,
                         u64::MAX
                     );
-                    return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                    return Err(nix::errno::Errno::EINVAL.into());
                 }
             }
         }
         // check volumes
         for (i, vol) in self.volumes.iter().enumerate() {
-            assert!(vol.get_id() < fs::HAMMER2_MAX_VOLUMES);
+            assert!(vol.get_id() < crate::fs::HAMMER2_MAX_VOLUMES.into());
             // check offset
-            if vol.get_offset() & fs::HAMMER2_FREEMAP_LEVEL1_MASK != 0 {
+            if vol.get_offset() & crate::fs::HAMMER2_FREEMAP_LEVEL1_MASK != 0 {
                 log::error!(
                     "{}'s offset {:#018x} not {:#018x} aligned",
                     vol.get_path(),
                     vol.get_offset(),
-                    fs::HAMMER2_FREEMAP_LEVEL1_SIZE
+                    crate::fs::HAMMER2_FREEMAP_LEVEL1_SIZE
                 );
             }
             // check vs previous volume
@@ -316,7 +311,7 @@ impl Hammer2Ondisk {
                 let prev = &self.volumes[i - 1];
                 if vol.get_id() != prev.get_id() + 1 {
                     log::error!("{} has inconsistent id {}", vol.get_path(), vol.get_id());
-                    return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                    return Err(nix::errno::Errno::EINVAL.into());
                 }
                 if vol.get_offset() != prev.get_offset() + prev.get_size() {
                     log::error!(
@@ -324,7 +319,7 @@ impl Hammer2Ondisk {
                         vol.get_path(),
                         vol.get_offset()
                     );
-                    return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                    return Err(nix::errno::Errno::EINVAL.into());
                 }
             } else {
                 // first
@@ -334,36 +329,36 @@ impl Hammer2Ondisk {
                         vol.get_path(),
                         vol.get_offset()
                     );
-                    return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                    return Err(nix::errno::Errno::EINVAL.into());
                 }
             }
             // check size for non-last and last volumes
             if i != self.volumes.len() - 1 {
-                if vol.get_size() < fs::HAMMER2_FREEMAP_LEVEL1_SIZE {
+                if vol.get_size() < crate::fs::HAMMER2_FREEMAP_LEVEL1_SIZE {
                     log::error!(
                         "{}'s size must be >= {:#018x}",
                         vol.get_path(),
-                        fs::HAMMER2_FREEMAP_LEVEL1_SIZE
+                        crate::fs::HAMMER2_FREEMAP_LEVEL1_SIZE
                     );
-                    return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                    return Err(nix::errno::Errno::EINVAL.into());
                 }
-                if vol.get_size() & fs::HAMMER2_FREEMAP_LEVEL1_MASK != 0 {
+                if vol.get_size() & crate::fs::HAMMER2_FREEMAP_LEVEL1_MASK != 0 {
                     log::error!(
                         "{}'s size is not {:#018x} aligned",
                         vol.get_path(),
-                        fs::HAMMER2_FREEMAP_LEVEL1_SIZE
+                        crate::fs::HAMMER2_FREEMAP_LEVEL1_SIZE
                     );
-                    return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                    return Err(nix::errno::Errno::EINVAL.into());
                 }
             } else {
                 // last
-                if vol.get_size() & fs::HAMMER2_VOLUME_ALIGNMASK != 0 {
+                if vol.get_size() & crate::fs::HAMMER2_VOLUME_ALIGNMASK != 0 {
                     log::error!(
                         "{}'s size is not {:#018x} aligned",
                         vol.get_path(),
-                        fs::HAMMER2_VOLUME_ALIGN
+                        crate::fs::HAMMER2_VOLUME_ALIGN
                     );
-                    return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+                    return Err(nix::errno::Errno::EINVAL.into());
                 }
             }
         }
@@ -371,10 +366,9 @@ impl Hammer2Ondisk {
     }
 
     /// # Errors
-    /// # Panics
-    pub fn verify_volumes(&self, verify_rootvol: bool) -> std::io::Result<()> {
+    pub fn verify_volumes(&self, verify_rootvol: bool) -> crate::Result<()> {
         self.verify_volumes_common(verify_rootvol)?;
-        if self.ident.version >= fs::HAMMER2_VOL_VERSION_MULTI_VOLUMES {
+        if self.ident.version >= crate::fs::HAMMER2_VOL_VERSION_MULTI_VOLUMES {
             self.verify_volumes_2(verify_rootvol)
         } else {
             self.verify_volumes_1(verify_rootvol)
@@ -409,7 +403,7 @@ impl Hammer2Ondisk {
             self.get_total_size()
         ));
         for vol in &self.volumes {
-            let s = if vol.get_id() == fs::HAMMER2_ROOT_VOLUME {
+            let s = if vol.get_id() == crate::fs::HAMMER2_ROOT_VOLUME.into() {
                 " (root volume)"
             } else {
                 ""
@@ -427,57 +421,59 @@ impl Hammer2Ondisk {
     }
 
     #[must_use]
-    pub fn get_volume(&self, offset: u64) -> Option<&volume::Hammer2Volume> {
+    pub fn get_volume(&self, offset: u64) -> Option<&crate::volume::Volume> {
         let mut offset = offset;
-        offset &= !fs::HAMMER2_OFF_MASK_RADIX;
+        offset &= !crate::fs::HAMMER2_OFF_MASK_RADIX;
         self.volumes
             .iter()
             .find(|&vol| offset >= vol.get_offset() && offset < vol.get_offset() + vol.get_size())
     }
 
     #[must_use]
-    pub fn get_volume_mut(&mut self, offset: u64) -> Option<&mut volume::Hammer2Volume> {
+    pub fn get_volume_mut(&mut self, offset: u64) -> Option<&mut crate::volume::Volume> {
         let mut offset = offset;
-        offset &= !fs::HAMMER2_OFF_MASK_RADIX;
+        offset &= !crate::fs::HAMMER2_OFF_MASK_RADIX;
         self.volumes
             .iter_mut()
             .find(|vol| offset >= vol.get_offset() && offset < vol.get_offset() + vol.get_size())
     }
 
     #[must_use]
-    pub fn get_root_volume(&self) -> Option<&volume::Hammer2Volume> {
+    pub fn get_root_volume(&self) -> Option<&crate::volume::Volume> {
         self.get_volume(0)
     }
 
     #[must_use]
-    pub fn get_root_volume_mut(&mut self) -> Option<&mut volume::Hammer2Volume> {
+    pub fn get_root_volume_mut(&mut self) -> Option<&mut crate::volume::Volume> {
         self.get_volume_mut(0)
     }
 
-    fn read_root_volume_data(&self) -> std::io::Result<fs::Hammer2VolumeData> {
-        volume::read_volume_data(
+    fn read_root_volume_data(&self) -> crate::Result<crate::fs::Hammer2VolumeData> {
+        crate::volume::read_volume_data(
             self.get_root_volume()
-                .ok_or_else(util::notfound)?
+                .ok_or(nix::errno::Errno::ENOENT)?
                 .get_path(),
         )
     }
 
     /// # Errors
     /// # Panics
-    pub fn get_best_volume_data(&mut self) -> std::io::Result<Vec<(usize, fs::Hammer2VolumeData)>> {
+    pub fn get_best_volume_data(
+        &mut self,
+    ) -> crate::Result<Vec<(usize, crate::fs::Hammer2VolumeData)>> {
         let mut bests = vec![];
-        for i in 0..self.get_nvolumes().into() {
+        for i in 0..self.get_nvolumes() {
             let vol = &mut self.volumes[i];
             let mut index = usize::MAX;
-            let mut best = fs::Hammer2VolumeData::new();
-            for j in 0..fs::HAMMER2_NUM_VOLHDRS {
-                let offset = volume::get_volume_data_offset(j);
+            let mut best = crate::fs::Hammer2VolumeData::new();
+            for j in 0..crate::fs::HAMMER2_NUM_VOLHDRS {
+                let offset = crate::volume::get_volume_data_offset(j);
                 if offset < vol.get_size() {
-                    let buf = vol.preadx(fs::HAMMER2_VOLUME_BYTES, offset)?;
-                    let voldata = util::align_to::<fs::Hammer2VolumeData>(&buf);
+                    let buf = vol.preadx(crate::fs::HAMMER2_VOLUME_BYTES, offset)?;
+                    let voldata = crate::util::align_to::<crate::fs::Hammer2VolumeData>(&buf);
                     assert!(
-                        voldata.magic == fs::HAMMER2_VOLUME_ID_HBO
-                            || voldata.magic == fs::HAMMER2_VOLUME_ID_ABO
+                        voldata.magic == crate::fs::HAMMER2_VOLUME_ID_HBO
+                            || voldata.magic == crate::fs::HAMMER2_VOLUME_ID_ABO
                     );
                     if j == 0 || best.mirror_tid < voldata.mirror_tid {
                         index = j;
@@ -496,32 +492,34 @@ impl Hammer2Ondisk {
 
     /// # Errors
     /// # Panics
-    pub fn read_media(&mut self, bref: &fs::Hammer2Blockref) -> std::io::Result<Vec<u8>> {
-        let radix = bref.data_off & fs::HAMMER2_OFF_MASK_RADIX;
+    pub fn read_media(&mut self, bref: &crate::fs::Hammer2Blockref) -> crate::Result<Vec<u8>> {
+        let radix = bref.data_off & crate::fs::HAMMER2_OFF_MASK_RADIX;
         let bytes = if radix == 0 { 0 } else { 1 << radix };
         if bytes == 0 {
             return Ok(vec![]);
         }
-        let io_off = bref.data_off & !fs::HAMMER2_OFF_MASK_RADIX;
-        let io_base = io_off & !fs::HAMMER2_LBUFMASK;
+        let io_off = bref.data_off & !crate::fs::HAMMER2_OFF_MASK_RADIX;
+        let io_base = io_off & !crate::fs::HAMMER2_LBUFMASK;
         let boff = io_off - io_base;
-        let mut io_bytes = fs::HAMMER2_LBUFSIZE;
+        let mut io_bytes = crate::fs::HAMMER2_LBUFSIZE;
         while io_bytes + boff < bytes {
             io_bytes <<= 1;
         }
-        if io_bytes > fs::HAMMER2_PBUFSIZE {
-            return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
+        if io_bytes > crate::fs::HAMMER2_PBUFSIZE {
+            return Err(nix::errno::Errno::EINVAL.into());
         }
-        let vol = self.get_volume_mut(io_off).ok_or_else(util::notfound)?;
-        Ok(vol.preadx(io_bytes, io_base - vol.get_offset())?
-            [usize::try_from(boff).unwrap()..usize::try_from(boff + bytes).unwrap()]
-            .to_vec())
+        let vol = self
+            .get_volume_mut(io_off)
+            .ok_or::<crate::Error>(nix::errno::Errno::ENOENT.into())?;
+        let beg = usize::try_from(boff).unwrap();
+        let end = usize::try_from(boff + bytes).unwrap();
+        Ok(vol.preadx(io_bytes, io_base - vol.get_offset())?[beg..end].to_vec())
     }
 }
 
 /// # Errors
-pub fn init(blkdevs: &str, readonly: bool) -> std::io::Result<Hammer2Ondisk> {
-    let mut fso = Hammer2Ondisk::new(None);
+pub fn init(blkdevs: &str, readonly: bool) -> crate::Result<Ondisk> {
+    let mut fso = Ondisk::new(None);
     for s in &blkdevs.split(':').collect::<Vec<&str>>() {
         fso.add_volume(s, readonly)?;
     }
@@ -550,24 +548,24 @@ mod tests {
             };
             fso.log_volumes();
             assert!(fso.get_nvolumes() > 0);
-            assert!(fso.get_nvolumes() <= super::fs::HAMMER2_MAX_VOLUMES);
+            assert!(fso.get_nvolumes() <= crate::fs::HAMMER2_MAX_VOLUMES.into());
             assert!(fso.get_total_size() > 0);
             assert_eq!(
-                fso.get_total_size() & super::fs::HAMMER2_VOLUME_ALIGNMASK,
+                fso.get_total_size() & crate::fs::HAMMER2_VOLUME_ALIGNMASK,
                 0
             );
 
             let Some(vol) = fso.get_root_volume() else {
                 panic!("")
             };
-            assert_eq!(vol.get_id(), super::fs::HAMMER2_ROOT_VOLUME);
+            assert_eq!(vol.get_id(), crate::fs::HAMMER2_ROOT_VOLUME.into());
             assert!(std::fs::metadata(vol.get_path()).is_ok());
 
             assert!(fso.get_volume(fso.get_total_size() - 1).is_some());
             assert!(fso.get_volume(fso.get_total_size()).is_none());
 
             for i in 0..fso.get_nvolumes() {
-                let vol = &fso[i.into()];
+                let vol = &fso[i];
                 assert_eq!(vol.get_id(), i, "{i}");
                 assert!(std::fs::metadata(vol.get_path()).is_ok(), "{i}");
             }

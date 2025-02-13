@@ -1,8 +1,6 @@
-use crate::subs::DEBUFSIZE;
-
 /// # Errors
 pub fn compress(buf: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let mut dst = [0; DEBUFSIZE / 2];
+    let mut dst = [0; crate::subs::DEBUFSIZE / 2];
     let res = unsafe {
         lz4::liblz4::LZ4_compress_default(
             std::ptr::from_ref::<[u8]>(buf).cast::<i8>(),
@@ -22,8 +20,8 @@ pub fn compress(buf: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 /// # Errors
 /// # Panics
 pub fn decompress(buf: &[u8], max_size: usize) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    assert!(max_size <= DEBUFSIZE);
-    let mut dst = [0; DEBUFSIZE + 128];
+    assert!(max_size <= crate::subs::DEBUFSIZE);
+    let mut dst = [0; crate::subs::DEBUFSIZE + 128];
     let cinsize = i32::from_le_bytes(buf[..4].try_into()?);
     assert!(cinsize <= buf.len().try_into()?);
     let res = unsafe {
@@ -43,9 +41,12 @@ pub fn decompress(buf: &[u8], max_size: usize) -> Result<Vec<u8>, Box<dyn std::e
 
 #[cfg(test)]
 mod tests {
-    use crate::subs::DEBUFSIZE;
-
-    const INPUT: [&[u8]; 4] = [b"x", b"HAMMER2", b"hammer2", &[0x41; DEBUFSIZE]];
+    const INPUT: [&[u8]; 4] = [
+        b"x",
+        b"HAMMER2",
+        b"hammer2",
+        &[0x41; crate::subs::DEBUFSIZE],
+    ];
 
     #[test]
     fn test_compress_decompress() {
@@ -54,7 +55,7 @@ mod tests {
                 Ok(v) => v,
                 Err(e) => panic!("{e}:{b:?}"),
             };
-            let d = match super::decompress(&c, DEBUFSIZE) {
+            let d = match super::decompress(&c, crate::subs::DEBUFSIZE) {
                 Ok(v) => v,
                 Err(e) => panic!("{e}:{b:?}"),
             };
