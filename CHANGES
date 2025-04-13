@@ -1,3 +1,12 @@
+v0.4.0
+======
+- Add src/chain.rs
+- Add src/hammer2.rs
+- Add src/inode.rs
+- Add src/option.rs
+- Add src/xop.rs
+- Misc updates
+
 v0.3.0
 ======
 - Misc updates

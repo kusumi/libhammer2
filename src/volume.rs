@@ -100,14 +100,14 @@ pub(crate) fn read_volume_data(path: &str) -> crate::Result<crate::fs::Hammer2Vo
             break;
         }
         crate::util::seek_set(&mut fp, offset)?;
-        let mut buf = vec![0; crate::fs::HAMMER2_VOLUME_BYTES as usize];
+        let mut buf = vec![0; crate::fs::HAMMER2_VOLUME_BYTES.try_into().unwrap()];
         fp.read_exact(&mut buf)?;
-        let vd = crate::util::align_to::<crate::fs::Hammer2VolumeData>(&buf);
+        let vd = crate::ondisk::media_as_volume_data(&buf);
         // verify volume header magic
         if vd.magic != crate::fs::HAMMER2_VOLUME_ID_HBO
             && vd.magic != crate::fs::HAMMER2_VOLUME_ID_ABO
         {
-            log::error!("{path} #{i}: bad magic");
+            log::error!("{path} #{i}: bad magic {:#018x}", vd.magic);
             continue;
         }
         if vd.magic == crate::fs::HAMMER2_VOLUME_ID_ABO {
@@ -150,7 +150,7 @@ pub(crate) fn read_volume_data(path: &str) -> crate::Result<crate::fs::Hammer2Vo
         }
     }
     if zone == usize::MAX {
-        Err(nix::errno::Errno::ENOENT.into())
+        Err(nix::errno::Errno::ENODEV.into())
     } else {
         Ok(v[zone])
     }

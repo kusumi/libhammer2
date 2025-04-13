@@ -23,6 +23,7 @@ pub struct Ondisk {
     volumes: Vec<crate::volume::Volume>,
     total_size: u64,
     ident: VolumeIdentifier, // mostly unused by newfs_hammer2
+    quiet: bool,
 }
 
 impl std::ops::Index<usize> for Ondisk {
@@ -43,6 +44,15 @@ impl Ondisk {
     pub fn new(version: Option<u32>) -> Self {
         Self {
             ident: VolumeIdentifier::new(version),
+            ..Default::default()
+        }
+    }
+
+    #[must_use]
+    pub fn new_quiet(version: Option<u32>) -> Self {
+        Self {
+            ident: VolumeIdentifier::new(version),
+            quiet: true,
             ..Default::default()
         }
     }
@@ -77,12 +87,12 @@ impl Ondisk {
     pub fn add_volume(&mut self, path: &str, readonly: bool) -> crate::Result<()> {
         let t = std::fs::metadata(path)?.file_type();
         if !t.is_block_device() && !t.is_char_device() && !t.is_file() {
-            log::error!("Unsupported file type {t:?}");
+            log::error!("unsupported file type {t:?}");
             return Err(nix::errno::Errno::EINVAL.into());
         }
         if self.volumes.len() >= crate::fs::HAMMER2_MAX_VOLUMES.into() {
             log::error!(
-                "Exceeds maximum supported number of volumes {}",
+                "exceeds maximum supported number of volumes {}",
                 crate::fs::HAMMER2_MAX_VOLUMES
             );
             return Err(nix::errno::Errno::EINVAL.into());
@@ -101,7 +111,7 @@ impl Ondisk {
         } else {
             if self.ident.version != voldata.version {
                 log::error!(
-                    "Volume version mismatch {} vs {}",
+                    "volume version mismatch {} vs {}",
                     self.ident.version,
                     voldata.version
                 );
@@ -109,7 +119,7 @@ impl Ondisk {
             }
             if self.ident.nvolumes != voldata.nvolumes {
                 log::error!(
-                    "Volume count mismatch {} vs {}",
+                    "volume count mismatch {} vs {}",
                     self.ident.nvolumes,
                     voldata.nvolumes
                 );
@@ -117,7 +127,7 @@ impl Ondisk {
             }
             if self.ident.fsid != voldata.fsid {
                 log::error!(
-                    "Volume fsid UUID mismatch {:?} vs {:?}",
+                    "volume fsid UUID mismatch {:?} vs {:?}",
                     self.ident.fsid,
                     voldata.fsid
                 );
@@ -125,7 +135,7 @@ impl Ondisk {
             }
             if self.ident.fstype != voldata.fstype {
                 log::error!(
-                    "Volume fstype UUID mismatch {:?} vs {:?}",
+                    "volume fstype UUID mismatch {:?} vs {:?}",
                     self.ident.fstype,
                     voldata.fstype
                 );
@@ -149,7 +159,7 @@ impl Ondisk {
             let rootvoldata = self.read_root_volume_data()?;
             if rootvoldata.volu_id != crate::fs::HAMMER2_ROOT_VOLUME {
                 log::error!(
-                    "Volume id {} must be {}",
+                    "volume id {} must be {}",
                     rootvoldata.volu_id,
                     crate::fs::HAMMER2_ROOT_VOLUME
                 );
@@ -159,7 +169,7 @@ impl Ondisk {
                 != crate::fs::HAMMER2_UUID_STRING
             {
                 log::error!(
-                    "Volume fstype UUID {:?} must be {}",
+                    "volume fstype UUID {:?} must be {}",
                     rootvoldata.fstype,
                     crate::fs::HAMMER2_UUID_STRING
                 );
@@ -179,7 +189,9 @@ impl Ondisk {
             }
             // check volume size vs block device size
             let size = crate::subs::get_volume_size_from_path(vol.get_path())?;
-            println!("checkvolu header {i} {:016x}/{:016x}", vol.get_size(), size);
+            if !self.quiet {
+                println!("checkvolu header {i} {:016x}/{:016x}", vol.get_size(), size);
+            }
             if vol.get_size() > size {
                 log::error!(
                     "{}'s size {:#018x} exceeds device size {:#018x}",
@@ -200,24 +212,24 @@ impl Ondisk {
     fn verify_volumes_1(&self, verify_rootvol: bool) -> crate::Result<()> {
         // check initialized volume count
         if self.volumes.len() != 1 {
-            log::error!("Only 1 volume supported");
+            log::error!("only 1 volume supported");
             return Err(nix::errno::Errno::EINVAL.into());
         }
         // check volume header
         if verify_rootvol {
             let rootvoldata = self.read_root_volume_data()?;
             if rootvoldata.nvolumes != 0 {
-                log::error!("Volume count {} must be 0", rootvoldata.nvolumes);
+                log::error!("volume count {} must be 0", rootvoldata.nvolumes);
                 return Err(nix::errno::Errno::EINVAL.into());
             }
             if rootvoldata.total_size != 0 {
-                log::error!("Total size {:#018x} must be 0", rootvoldata.total_size);
+                log::error!("total size {:#018x} must be 0", rootvoldata.total_size);
                 return Err(nix::errno::Errno::EINVAL.into());
             }
             for i in 0..crate::fs::HAMMER2_MAX_VOLUMES.into() {
                 let off = rootvoldata.volu_loff[i];
                 if off != 0 {
-                    log::error!("Volume offset[{}] {:#018x} must be 0", i, off);
+                    log::error!("volume offset[{i}] {off:#018x} must be 0");
                     return Err(nix::errno::Errno::EINVAL.into());
                 }
             }
@@ -255,7 +267,7 @@ impl Ondisk {
             let nvolumes = self.get_nvolumes();
             if usize::from(rootvoldata.nvolumes) != nvolumes {
                 log::error!(
-                    "Volume header requires {} devices, {} specified",
+                    "volume header requires {} devices, {} specified",
                     rootvoldata.nvolumes,
                     nvolumes
                 );
@@ -263,7 +275,7 @@ impl Ondisk {
             }
             if rootvoldata.total_size != self.total_size {
                 log::error!(
-                    "Total size {:#018x} does not equal sum of volumes {:#018x}",
+                    "total size {:#018x} does not equal sum of volumes {:#018x}",
                     rootvoldata.total_size,
                     self.total_size
                 );
@@ -273,7 +285,7 @@ impl Ondisk {
                 let off = rootvoldata.volu_loff[i];
                 if off == u64::MAX {
                     log::error!(
-                        "Volume offset[{}] {:#018x} must not be {:#018x}",
+                        "volume offset[{}] {:#018x} must not be {:#018x}",
                         i,
                         off,
                         u64::MAX
@@ -285,7 +297,7 @@ impl Ondisk {
                 let off = rootvoldata.volu_loff[i];
                 if off != u64::MAX {
                     log::error!(
-                        "Volume offset[{}] {:#018x} must be {:#018x}",
+                        "volume offset[{}] {:#018x} must be {:#018x}",
                         i,
                         off,
                         u64::MAX
@@ -333,7 +345,17 @@ impl Ondisk {
                 }
             }
             // check size for non-last and last volumes
-            if i != self.volumes.len() - 1 {
+            if i == self.volumes.len() - 1 {
+                // last
+                if vol.get_size() & crate::fs::HAMMER2_VOLUME_ALIGNMASK != 0 {
+                    log::error!(
+                        "{}'s size is not {:#018x} aligned",
+                        vol.get_path(),
+                        crate::fs::HAMMER2_VOLUME_ALIGN
+                    );
+                    return Err(nix::errno::Errno::EINVAL.into());
+                }
+            } else {
                 if vol.get_size() < crate::fs::HAMMER2_FREEMAP_LEVEL1_SIZE {
                     log::error!(
                         "{}'s size must be >= {:#018x}",
@@ -347,16 +369,6 @@ impl Ondisk {
                         "{}'s size is not {:#018x} aligned",
                         vol.get_path(),
                         crate::fs::HAMMER2_FREEMAP_LEVEL1_SIZE
-                    );
-                    return Err(nix::errno::Errno::EINVAL.into());
-                }
-            } else {
-                // last
-                if vol.get_size() & crate::fs::HAMMER2_VOLUME_ALIGNMASK != 0 {
-                    log::error!(
-                        "{}'s size is not {:#018x} aligned",
-                        vol.get_path(),
-                        crate::fs::HAMMER2_VOLUME_ALIGN
                     );
                     return Err(nix::errno::Errno::EINVAL.into());
                 }
@@ -375,19 +387,8 @@ impl Ondisk {
         }
     }
 
-    pub fn print_volumes(&self) {
-        for s in &self.format_volumes() {
-            println!("{s}");
-        }
-    }
-
-    pub fn log_volumes(&self) {
-        for s in &self.format_volumes() {
-            log::info!("{s}");
-        }
-    }
-
-    fn format_volumes(&self) -> Vec<String> {
+    #[must_use]
+    pub fn fmt_volumes(&self) -> Vec<String> {
         let mut w = 0;
         for vol in &self.volumes {
             let n = vol.get_path().len();
@@ -422,8 +423,7 @@ impl Ondisk {
 
     #[must_use]
     pub fn get_volume(&self, offset: u64) -> Option<&crate::volume::Volume> {
-        let mut offset = offset;
-        offset &= !crate::fs::HAMMER2_OFF_MASK_RADIX;
+        let offset = crate::extra::conv_offset_to_raw_data_off(offset);
         self.volumes
             .iter()
             .find(|&vol| offset >= vol.get_offset() && offset < vol.get_offset() + vol.get_size())
@@ -431,8 +431,7 @@ impl Ondisk {
 
     #[must_use]
     pub fn get_volume_mut(&mut self, offset: u64) -> Option<&mut crate::volume::Volume> {
-        let mut offset = offset;
-        offset &= !crate::fs::HAMMER2_OFF_MASK_RADIX;
+        let offset = crate::extra::conv_offset_to_raw_data_off(offset);
         self.volumes
             .iter_mut()
             .find(|vol| offset >= vol.get_offset() && offset < vol.get_offset() + vol.get_size())
@@ -448,12 +447,21 @@ impl Ondisk {
         self.get_volume_mut(0)
     }
 
-    fn read_root_volume_data(&self) -> crate::Result<crate::fs::Hammer2VolumeData> {
+    pub(crate) fn read_root_volume_data(&self) -> crate::Result<crate::fs::Hammer2VolumeData> {
         crate::volume::read_volume_data(
             self.get_root_volume()
-                .ok_or(nix::errno::Errno::ENOENT)?
+                .ok_or(nix::errno::Errno::ENODEV)?
                 .get_path(),
         )
+    }
+
+    #[must_use]
+    pub fn get_volumes(&self) -> Vec<&crate::volume::Volume> {
+        let mut v = vec![];
+        for vol in &self.volumes {
+            v.push(vol);
+        }
+        v
     }
 
     /// # Errors
@@ -470,7 +478,7 @@ impl Ondisk {
                 let offset = crate::volume::get_volume_data_offset(j);
                 if offset < vol.get_size() {
                     let buf = vol.preadx(crate::fs::HAMMER2_VOLUME_BYTES, offset)?;
-                    let voldata = crate::util::align_to::<crate::fs::Hammer2VolumeData>(&buf);
+                    let voldata = crate::ondisk::media_as_volume_data(&buf);
                     assert!(
                         voldata.magic == crate::fs::HAMMER2_VOLUME_ID_HBO
                             || voldata.magic == crate::fs::HAMMER2_VOLUME_ID_ABO
@@ -493,12 +501,12 @@ impl Ondisk {
     /// # Errors
     /// # Panics
     pub fn read_media(&mut self, bref: &crate::fs::Hammer2Blockref) -> crate::Result<Vec<u8>> {
-        let radix = bref.data_off & crate::fs::HAMMER2_OFF_MASK_RADIX;
+        let radix = bref.get_radix();
         let bytes = if radix == 0 { 0 } else { 1 << radix };
         if bytes == 0 {
             return Ok(vec![]);
         }
-        let io_off = bref.data_off & !crate::fs::HAMMER2_OFF_MASK_RADIX;
+        let io_off = bref.get_raw_data_off();
         let io_base = io_off & !crate::fs::HAMMER2_LBUFMASK;
         let boff = io_off - io_base;
         let mut io_bytes = crate::fs::HAMMER2_LBUFSIZE;
@@ -510,7 +518,7 @@ impl Ondisk {
         }
         let vol = self
             .get_volume_mut(io_off)
-            .ok_or::<crate::Error>(nix::errno::Errno::ENOENT.into())?;
+            .ok_or::<crate::Error>(nix::errno::Errno::ENODEV.into())?;
         let beg = usize::try_from(boff).unwrap();
         let end = usize::try_from(boff + bytes).unwrap();
         Ok(vol.preadx(io_bytes, io_base - vol.get_offset())?[beg..end].to_vec())
@@ -518,18 +526,126 @@ impl Ondisk {
 }
 
 /// # Errors
-pub fn init(blkdevs: &str, readonly: bool) -> crate::Result<Ondisk> {
-    let mut fso = Ondisk::new(None);
-    for s in &blkdevs.split(':').collect::<Vec<&str>>() {
+pub fn init(spec: &str, readonly: bool) -> crate::Result<Ondisk> {
+    init_impl(spec, readonly, false)
+}
+
+/// # Errors
+pub fn init_quiet(spec: &str, readonly: bool) -> crate::Result<Ondisk> {
+    init_impl(spec, readonly, true)
+}
+
+fn init_impl(spec: &str, readonly: bool, quiet: bool) -> crate::Result<Ondisk> {
+    let mut fso = if quiet {
+        Ondisk::new_quiet(None)
+    } else {
+        Ondisk::new(None)
+    };
+    let spec = if let Some(i) = spec.find('@') {
+        &spec[..i]
+    } else {
+        spec
+    };
+    for s in &spec.split(':').collect::<Vec<&str>>() {
         fso.add_volume(s, readonly)?;
     }
     fso.verify_volumes(true)?;
     Ok(fso)
 }
 
+#[must_use]
+pub fn media_as_inode_data(media: &[u8]) -> &crate::fs::Hammer2InodeData {
+    crate::util::align_to(media)
+}
+
+#[must_use]
+pub fn media_as_volume_data(media: &[u8]) -> &crate::fs::Hammer2VolumeData {
+    crate::util::align_to(media)
+}
+
+/// # Errors
+pub fn media_as_blockref<'a>(
+    bref: &crate::fs::Hammer2Blockref,
+    media: &'a [u8],
+) -> nix::Result<Vec<&'a crate::fs::Hammer2Blockref>> {
+    match media_as_blockref_impl(bref, media) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            log::error!("bad blockref type {}", bref.typ);
+            Err(e)
+        }
+    }
+}
+
+#[must_use]
+pub fn media_as_blockref_safe<'a>(
+    bref: &crate::fs::Hammer2Blockref,
+    media: &'a [u8],
+) -> Vec<&'a crate::fs::Hammer2Blockref> {
+    media_as_blockref_impl(bref, media).unwrap_or_default()
+}
+
+fn media_as_blockref_impl<'a>(
+    bref: &crate::fs::Hammer2Blockref,
+    media: &'a [u8],
+) -> nix::Result<Vec<&'a crate::fs::Hammer2Blockref>> {
+    match bref.typ {
+        crate::fs::HAMMER2_BREF_TYPE_INODE => {
+            let ipdata = media_as_inode_data(media);
+            if ipdata.meta.is_sup_root() || !ipdata.meta.has_direct_data() {
+                Ok(ipdata
+                    .u_as::<crate::fs::Hammer2Blockset>()
+                    .as_blockref()
+                    .to_vec())
+            } else {
+                Ok(vec![])
+            }
+        }
+        crate::fs::HAMMER2_BREF_TYPE_INDIRECT | crate::fs::HAMMER2_BREF_TYPE_FREEMAP_NODE => {
+            Ok(crate::fs::media_as(media))
+        }
+        crate::fs::HAMMER2_BREF_TYPE_FREEMAP => Ok(media_as_volume_data(media)
+            .freemap_blockset
+            .as_blockref()
+            .to_vec()),
+        crate::fs::HAMMER2_BREF_TYPE_VOLUME => Ok(media_as_volume_data(media)
+            .sroot_blockset
+            .as_blockref()
+            .to_vec()),
+        _ => Err(nix::errno::Errno::EINVAL),
+    }
+}
+
+/// # Errors
+pub fn verify_media(bref: &crate::fs::Hammer2Blockref, media: &[u8]) -> nix::Result<bool> {
+    match crate::fs::dec_check(bref.methods) {
+        crate::fs::HAMMER2_CHECK_NONE | crate::fs::HAMMER2_CHECK_DISABLED => Ok(true),
+        crate::fs::HAMMER2_CHECK_ISCSI32 => Ok(bref
+            .check_as::<crate::fs::Hammer2BlockrefCheckIscsi>()
+            .value
+            == icrc32::iscsi_crc32(media)),
+        crate::fs::HAMMER2_CHECK_XXHASH64 => Ok(bref
+            .check_as::<crate::fs::Hammer2BlockrefCheckXxhash64>()
+            .value
+            == crate::xxhash::xxh64(media)),
+        crate::fs::HAMMER2_CHECK_SHA192 => Ok(bref
+            .check_as::<crate::fs::Hammer2BlockrefCheckSha256>()
+            .data
+            == crate::sha::sha256(media).as_slice()),
+        crate::fs::HAMMER2_CHECK_FREEMAP => Ok(bref
+            .check_as::<crate::fs::Hammer2BlockrefCheckFreemap>()
+            .icrc32
+            == icrc32::iscsi_crc32(media)),
+        _ => {
+            log::error!("bad check type {:02x}", bref.methods);
+            Err(nix::errno::Errno::EINVAL)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    const HAMMER2_BLKDEVS: &str = "HAMMER2_BLKDEVS";
+    const HAMMER2_DEVICE: &str = "HAMMER2_DEVICE";
 
     fn init_std_logger() -> Result<(), log::SetLoggerError> {
         let env = env_logger::Env::default().filter_or("RUST_LOG", "trace");
@@ -538,15 +654,15 @@ mod tests {
 
     #[test]
     fn test_init() {
-        if let Ok(blkdevs) = std::env::var(HAMMER2_BLKDEVS) {
-            if let Err(e) = init_std_logger() {
-                panic!("{e}");
-            }
-            let fso = match super::init(&blkdevs, true) {
+        if let Ok(spec) = std::env::var(HAMMER2_DEVICE) {
+            let _ = init_std_logger();
+            let fso = match super::init(&spec, true) {
                 Ok(v) => v,
                 Err(e) => panic!("{e}"),
             };
-            fso.log_volumes();
+            for s in &fso.fmt_volumes() {
+                log::info!("{s}");
+            }
             assert!(fso.get_nvolumes() > 0);
             assert!(fso.get_nvolumes() <= crate::fs::HAMMER2_MAX_VOLUMES.into());
             assert!(fso.get_total_size() > 0);

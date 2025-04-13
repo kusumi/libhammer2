@@ -1,6 +1,8 @@
+use byteorder::ByteOrder;
 use std::os::unix::fs::FileTypeExt;
 
 pub(crate) const DEBUFSIZE: usize = crate::fs::HAMMER2_PBUFSIZE as usize;
+pub(crate) const DEV_BSIZE: u64 = 512;
 
 pub const K: usize = 1024;
 pub const M: usize = K * 1024;
@@ -110,7 +112,8 @@ pub fn get_blockref_type_string(typ: u8) -> &'static str {
     }
 }
 
-pub const HAMMER2_CHECK_STRINGS: [&str; 5] = ["none", "disabled", "crc32", "xxhash64", "sha192"];
+pub const HAMMER2_CHECK_STRINGS: [&str; 6] =
+    ["none", "disabled", "crc32", "xxhash64", "sha192", "freemap"];
 pub const HAMMER2_COMP_STRINGS: [&str; 4] = ["none", "autozero", "lz4", "zlib"];
 
 // Note: Check algorithms normally do not encode any level.
@@ -133,7 +136,6 @@ pub fn get_check_mode_string(x: u8) -> String {
     } else {
         unreachable!();
     }
-    .to_string()
 }
 
 #[must_use]
@@ -155,7 +157,6 @@ pub fn get_comp_mode_string(x: u8) -> String {
     } else {
         unreachable!();
     }
-    .to_string()
 }
 
 #[must_use]
@@ -264,8 +265,7 @@ pub fn dirhash(aname: &[u8]) -> u64 {
 /// # Errors
 pub fn get_hammer2_mounts() -> Result<Vec<String>, std::string::FromUtf8Error> {
     let mut v = vec![];
-    for t in crate::os::get_mnt_info()? {
-        let (fstypename, mntonname, _) = t;
+    for (fstypename, mntonname, _) in crate::os::get_mnt_info()? {
         if fstypename == "hammer2" {
             v.push(mntonname);
         }
@@ -303,17 +303,33 @@ pub fn get_uuid_string_from_bytes(b: &[u8]) -> String {
         b[10], b[11], b[12], b[13], b[14], b[15])
 }
 
-#[must_use]
-pub fn get_chars_per_line() -> usize {
-    if let Some((terminal_size::Width(w), terminal_size::Height(_))) =
-        terminal_size::terminal_size()
-    {
-        w.into()
-    } else if let Ok(v) = std::env::var("COLUMNS") {
-        v.parse().unwrap_or(80)
-    } else {
-        80 // last resort
-    }
+pub(crate) fn conv_time_to_timespec(t: u64) -> u64 {
+    t / 1_000_000 // sec
+}
+
+#[allow(dead_code)]
+pub(crate) fn conv_timespec_to_time(t: u64) -> u64 {
+    t * 1_000_000 // sec
+}
+
+#[allow(dead_code)]
+pub(crate) fn conv_uuid_to_unix_xid(u: &uuid::Uuid) -> u32 {
+    conv_uuid_to_unix_xid_from_bytes(u.as_bytes())
+}
+
+pub(crate) fn conv_uuid_to_unix_xid_from_bytes(b: &[u8]) -> u32 {
+    byteorder::NativeEndian::read_u32(&b[12..])
+}
+
+#[allow(dead_code)]
+pub(crate) fn conv_unix_xid_to_uuid(xid: u32) -> uuid::Uuid {
+    uuid::Uuid::from_bytes(conv_unix_xid_to_uuid_bytes(xid))
+}
+
+pub(crate) fn conv_unix_xid_to_uuid_bytes(xid: u32) -> [u8; 16] {
+    let mut uuid = [0; 16];
+    byteorder::NativeEndian::write_u32_into(&[xid], &mut uuid[12..]);
+    uuid
 }
 
 #[cfg(test)]
@@ -400,7 +416,7 @@ mod tests {
     }
 
     #[test]
-    fn test_uuid() {
+    fn test_uuid_parse_str() {
         let u = match uuid::Uuid::parse_str(crate::fs::HAMMER2_UUID_STRING) {
             Ok(v) => v,
             Err(e) => panic!("{e}"),
@@ -409,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn test_uuid_wrapper() {
+    fn test_get_uuid_string() {
         let u = match super::get_uuid_from_str(crate::fs::HAMMER2_UUID_STRING) {
             Ok(v) => v,
             Err(e) => panic!("{e}"),
@@ -422,15 +438,47 @@ mod tests {
     }
 
     #[test]
-    fn test_terminal_size() {
-        match terminal_size::terminal_size() {
-            Some(v) => {
-                println!("{v:?}");
-                let (terminal_size::Width(w), terminal_size::Height(h)) = v;
-                assert!(w > 0);
-                assert!(h > 0);
-            }
-            None => panic!(""),
-        }
+    fn test_conv_uuid_to_unix_xid() {
+        let u = match super::get_uuid_from_str(crate::fs::HAMMER2_UUID_STRING) {
+            Ok(v) => v,
+            Err(e) => panic!("{e}"),
+        };
+        let node = &u.as_bytes()[10..];
+        assert_eq!(node.len(), 6);
+        let xid = (u32::from(node[5]) << 24)
+            + (u32::from(node[4]) << 16)
+            + (u32::from(node[3]) << 8)
+            + u32::from(node[2]);
+        assert_eq!(super::conv_uuid_to_unix_xid(&u), xid);
+        assert_eq!(super::conv_uuid_to_unix_xid_from_bytes(u.as_bytes()), xid);
+        // node: 01 30 1b b8 a9 f5
+        let xid = (0xf5_u32 << 24) + (0xa9_u32 << 16) + (0xb8_u32 << 8) + 0x1b_u32;
+        assert_eq!(super::conv_uuid_to_unix_xid(&u), xid);
+        assert_eq!(super::conv_uuid_to_unix_xid_from_bytes(u.as_bytes()), xid);
+    }
+
+    #[test]
+    fn test_conv_unix_xid_to_uuid() {
+        let xid = 0x1234_5678;
+        let b = super::conv_unix_xid_to_uuid_bytes(xid);
+        let u = super::conv_unix_xid_to_uuid(xid);
+        assert_eq!(b, *u.as_bytes());
+        let b = u.as_bytes();
+        assert_eq!(b[0], 0);
+        assert_eq!(b[1], 0);
+        assert_eq!(b[2], 0);
+        assert_eq!(b[3], 0);
+        assert_eq!(b[4], 0);
+        assert_eq!(b[5], 0);
+        assert_eq!(b[6], 0);
+        assert_eq!(b[7], 0);
+        assert_eq!(b[8], 0);
+        assert_eq!(b[9], 0);
+        assert_eq!(b[10], 0);
+        assert_eq!(b[11], 0);
+        assert!(b[12] == 0x12 || b[12] == 0x78);
+        assert!(b[13] == 0x34 || b[13] == 0x56);
+        assert!(b[14] == 0x56 || b[14] == 0x34);
+        assert!(b[15] == 0x78 || b[15] == 0x12);
     }
 }

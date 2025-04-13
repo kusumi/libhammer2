@@ -1,19 +1,24 @@
-pub mod extra;
+pub mod chain;
+mod extra;
 pub mod fs;
+pub mod hammer2;
+pub mod inode;
 pub mod ioctl;
 pub mod lz4;
 pub mod ondisk;
+mod option;
 pub mod os;
 pub mod sha;
 pub mod subs;
 pub mod util;
 pub mod volume;
+mod xop;
 pub mod xxhash;
 pub mod zlib;
 
 use std::fmt::Display;
 
-pub const VERSION: [i32; 3] = [0, 3, 0];
+pub const VERSION: [i32; 3] = [0, 4, 0];
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -44,4 +49,9 @@ impl From<nix::errno::Errno> for Error {
     fn from(e: nix::errno::Errno) -> Self {
         Self::Errno(e)
     }
+}
+
+/// # Errors
+pub fn mount(spec: &str, args: &[&str]) -> Result<hammer2::Hammer2> {
+    hammer2::Hammer2::mount(spec, args)
 }

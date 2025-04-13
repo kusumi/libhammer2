@@ -14,10 +14,11 @@ const IOC_DESTROY: u8 = 94;
 const IOC_EMERG_MODE: u8 = 95;
 const IOC_GROWFS: u8 = 96;
 const IOC_VOLUME_LIST: u8 = 97;
+const IOC_VOLUME_LIST2: u8 = 197; // Rust
 
 // IOC_VERSION_GET
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct IocVersion {
     pub version: u32,
     pub reserved: [u8; 252],
@@ -39,11 +40,13 @@ impl IocVersion {
     }
 }
 
+pub const CMD_VERSION_GET: u64 =
+    nix::request_code_readwrite!(IOC, IOC_VERSION_GET, std::mem::size_of::<IocVersion>());
 nix::ioctl_readwrite!(version_get, IOC, IOC_VERSION_GET, IocVersion);
 
-// IOC_PFS_XXX
+// IOC_PFS_xxx
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct IocPfs {
     pub name_key: u64,  // super-root directory scan
     pub name_next: u64, // (GET only)
@@ -83,6 +86,16 @@ impl IocPfs {
     }
 }
 
+pub const CMD_PFS_GET: u64 =
+    nix::request_code_readwrite!(IOC, IOC_PFS_GET, std::mem::size_of::<IocPfs>());
+pub const CMD_PFS_CREATE: u64 =
+    nix::request_code_readwrite!(IOC, IOC_PFS_CREATE, std::mem::size_of::<IocPfs>());
+pub const CMD_PFS_DELETE: u64 =
+    nix::request_code_readwrite!(IOC, IOC_PFS_DELETE, std::mem::size_of::<IocPfs>());
+pub const CMD_PFS_LOOKUP: u64 =
+    nix::request_code_readwrite!(IOC, IOC_PFS_LOOKUP, std::mem::size_of::<IocPfs>());
+pub const CMD_PFS_SNAPSHOT: u64 =
+    nix::request_code_readwrite!(IOC, IOC_PFS_SNAPSHOT, std::mem::size_of::<IocPfs>());
 nix::ioctl_readwrite!(pfs_get, IOC, IOC_PFS_GET, IocPfs);
 nix::ioctl_readwrite!(pfs_create, IOC, IOC_PFS_CREATE, IocPfs);
 nix::ioctl_readwrite!(pfs_delete, IOC, IOC_PFS_DELETE, IocPfs);
@@ -91,9 +104,9 @@ nix::ioctl_readwrite!(pfs_snapshot, IOC, IOC_PFS_SNAPSHOT, IocPfs);
 
 pub const PFS_FLAGS_NOSYNC: u32 = 0x0000_0001;
 
-// IOC_INODE_XXX
+// IOC_INODE_xxx
 #[repr(C)]
-#[derive(Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct IocInode {
     pub flags: u32,
     pub unused: u64, // XXX void* in DragonFly
@@ -111,6 +124,10 @@ impl IocInode {
     }
 }
 
+pub const CMD_INODE_GET: u64 =
+    nix::request_code_readwrite!(IOC, IOC_INODE_GET, std::mem::size_of::<IocInode>());
+pub const CMD_INODE_SET: u64 =
+    nix::request_code_readwrite!(IOC, IOC_INODE_SET, std::mem::size_of::<IocInode>());
 nix::ioctl_readwrite!(inode_get, IOC, IOC_INODE_GET, IocInode);
 nix::ioctl_readwrite!(inode_set, IOC, IOC_INODE_SET, IocInode);
 
@@ -121,6 +138,8 @@ pub const INODE_FLAGS_CHECK: u32 = 0x0000_0008;
 pub const INODE_FLAGS_COMP: u32 = 0x0000_0010;
 
 // IOC_DEBUG_DUMP
+pub const CMD_DEBUG_DUMP: u64 =
+    nix::request_code_readwrite!(IOC, IOC_DEBUG_DUMP, std::mem::size_of::<u32>());
 nix::ioctl_readwrite!(debug_dump, IOC, IOC_DEBUG_DUMP, u32);
 
 // IOC_BULKFREE_SCAN
@@ -146,6 +165,8 @@ impl IocBulkfree {
     }
 }
 
+pub const CMD_BULKFREE_SCAN: u64 =
+    nix::request_code_readwrite!(IOC, IOC_BULKFREE_SCAN, std::mem::size_of::<IocBulkfree>());
 nix::ioctl_readwrite!(bulkfree_scan, IOC, IOC_BULKFREE_SCAN, IocBulkfree);
 
 // IOC_DESTROY
@@ -174,6 +195,8 @@ impl IocDestroy {
     }
 }
 
+pub const CMD_DESTROY: u64 =
+    nix::request_code_readwrite!(IOC, IOC_DESTROY, std::mem::size_of::<IocDestroy>());
 nix::ioctl_readwrite!(destroy, IOC, IOC_DESTROY, IocDestroy);
 
 pub const DESTROY_CMD_NOP: u32 = 0;
@@ -181,6 +204,8 @@ pub const DESTROY_CMD_FILE: u32 = 1;
 pub const DESTROY_CMD_INUM: u32 = 2;
 
 // IOC_EMERG_MODE
+pub const CMD_EMERG_MODE: u64 =
+    nix::request_code_readwrite!(IOC, IOC_EMERG_MODE, std::mem::size_of::<u32>());
 nix::ioctl_readwrite!(emerg_mode, IOC, IOC_EMERG_MODE, u32);
 
 // IOC_GROWFS
@@ -202,6 +227,8 @@ impl IocGrowfs {
     }
 }
 
+pub const CMD_GROWFS: u64 =
+    nix::request_code_readwrite!(IOC, IOC_GROWFS, std::mem::size_of::<IocGrowfs>());
 nix::ioctl_readwrite!(growfs, IOC, IOC_GROWFS, IocGrowfs);
 
 // IOC_VOLUME_LIST
@@ -233,7 +260,7 @@ impl IocVolume {
 }
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct IocVolumeList {
     pub volumes: u64, // XXX hammer2_ioc_volume_t* in DragonFly
     pub nvolumes: u32,
@@ -259,4 +286,65 @@ impl IocVolumeList {
     }
 }
 
+pub const CMD_VOLUME_LIST: u64 =
+    nix::request_code_readwrite!(IOC, IOC_VOLUME_LIST, std::mem::size_of::<IocVolumeList>());
 nix::ioctl_readwrite!(volume_list, IOC, IOC_VOLUME_LIST, IocVolumeList);
+
+// IOC_VOLUME_LIST2
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct IocVolume2 {
+    pub path: [u8; 64], // XXX crate::os::MAXPATHLEN too long
+    pub id: u32,
+    pub offset: u64,
+    pub size: u64,
+}
+
+impl Default for IocVolume2 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl IocVolume2 {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            path: [0; 64],
+            id: 0,
+            offset: 0,
+            size: 0,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct IocVolumeList2 {
+    pub volumes: [IocVolume2; crate::fs::HAMMER2_MAX_VOLUMES as usize],
+    pub nvolumes: u32,
+    pub version: u32,
+    pub pfs_name: [u8; crate::fs::HAMMER2_INODE_MAXNAME],
+}
+
+impl Default for IocVolumeList2 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl IocVolumeList2 {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            volumes: [IocVolume2::new(); crate::fs::HAMMER2_MAX_VOLUMES as usize],
+            nvolumes: 0,
+            version: 0,
+            pfs_name: [0; crate::fs::HAMMER2_INODE_MAXNAME],
+        }
+    }
+}
+
+pub const CMD_VOLUME_LIST2: u64 =
+    nix::request_code_readwrite!(IOC, IOC_VOLUME_LIST2, std::mem::size_of::<IocVolumeList2>());
+nix::ioctl_readwrite!(volume_list2, IOC, IOC_VOLUME_LIST2, IocVolumeList2);

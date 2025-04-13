@@ -82,9 +82,18 @@ pub const HAMMER2_AUX_MIN_BYTES: u64 = HAMMER2_VOLUME_ALIGN;
 pub const HAMMER2_AUX_NOM_BYTES: u64 = 256 * 1024 * 1024;
 pub const HAMMER2_AUX_MAX_BYTES: u64 = 1024 * 1024 * 1024;
 
+pub const HAMMER2_KEY_MIN: u64 = 0;
+pub const HAMMER2_KEY_MAX: u64 = 0xFFFF_FFFF_FFFF_FFFF;
+
 pub const HAMMER2_OFF_MASK: u64 = 0xFFFF_FFFF_FFFF_FFC0;
 pub const HAMMER2_OFF_MASK_LO: u64 = HAMMER2_OFF_MASK & HAMMER2_PBUFMASK;
 pub const HAMMER2_OFF_MASK_RADIX: u64 = 0x0000_0000_0000_003F;
+
+pub const HAMMER2_DIRHASH_VISIBLE: u64 = 0x8000_0000_0000_0000;
+pub const HAMMER2_DIRHASH_USERMSK: u64 = 0x7FFF_FFFF_FFFF_FFFF;
+pub const HAMMER2_DIRHASH_LOMASK: u64 = 0x0000_0000_0000_7FFF;
+
+pub const HAMMER2_SROOT_KEY: u64 = 0x0000_0000_0000_0000; // volume to sroot
 
 #[repr(C)]
 #[derive(Debug)]
@@ -149,7 +158,7 @@ impl Hammer2Blockref {
 }
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Hammer2BlockrefEmbedStats {
     pub data_count: u64,
     pub inode_count: u64,
@@ -367,6 +376,14 @@ pub struct Hammer2InodeMeta {
     pub reservede8: [u64; 3], // 00E8/F0/F8
 }
 
+impl Hammer2InodeMeta {
+    pub(crate) fn new() -> Self {
+        Self {
+            ..Default::default()
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct Hammer2InodeData {
@@ -385,9 +402,7 @@ impl Hammer2InodeData {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            meta: Hammer2InodeMeta {
-                ..Default::default()
-            },
+            meta: Hammer2InodeMeta::new(),
             filename: [0; HAMMER2_INODE_MAXNAME],
             u: [0; HAMMER2_EMBEDDED_BYTES as usize],
         }
@@ -567,6 +582,17 @@ pub const HAMMER2_VOL_VERSION_DEFAULT: u32 = HAMMER2_VOL_VERSION_MULTI_VOLUMES;
 pub const HAMMER2_VOL_VERSION_WIP: u32 = HAMMER2_VOL_VERSION_MULTI_VOLUMES + 1;
 
 pub const HAMMER2_NUM_VOLHDRS: usize = 4;
+
+#[must_use]
+pub fn media_as<T>(media: &[u8]) -> Vec<&T> {
+    let x = std::mem::size_of::<T>();
+    let n = media.len() / x;
+    let mut v = vec![];
+    for i in 0..n {
+        v.push(crate::util::align_to::<T>(&media[i * x..(i + 1) * x]));
+    }
+    v
+}
 
 #[cfg(test)]
 mod tests {

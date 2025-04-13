@@ -104,6 +104,7 @@ impl StatExt for libc::stat {
     }
 }
 
+#[allow(clippy::similar_names)]
 #[must_use]
 pub fn new_timeval(tv_sec: u64, tv_usec: u64) -> libc::timeval {
     libc::timeval {

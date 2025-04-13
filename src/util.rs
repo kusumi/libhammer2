@@ -49,6 +49,17 @@ pub fn seek_end(fp: &mut std::fs::File, offset: i64) -> std::io::Result<u64> {
     fp.seek(std::io::SeekFrom::End(offset))
 }
 
+pub(crate) fn split_path(path: &str) -> Vec<&str> {
+    let mut v = vec![];
+    for x in &path.trim_matches('/').split('/').collect::<Vec<&str>>() {
+        // multiple /'s between components generates ""
+        if !x.is_empty() && *x != "." {
+            v.push(*x);
+        }
+    }
+    v
+}
+
 /// # Panics
 #[must_use]
 pub fn align_head_to<T>(buf: &[u8]) -> &T {
@@ -133,6 +144,7 @@ mod tests {
             Ok("hammer2".to_string())
         );
 
+        assert_eq!(super::bin_to_string(&[]), Ok(String::new()));
         assert_eq!(super::bin_to_string(&[0]), Ok(String::new()));
         assert_eq!(super::bin_to_string(&[0, 0]), Ok(String::new()));
         assert_eq!(
@@ -154,5 +166,45 @@ mod tests {
         assert_ne!(t1, 0);
         assert_ne!(t2, 0);
         assert!(t2 >= t1);
+    }
+
+    #[test]
+    fn test_split_path() {
+        assert!(super::split_path("").is_empty());
+
+        assert!(super::split_path("/").is_empty());
+        assert!(super::split_path("/.").is_empty());
+
+        assert!(super::split_path("//").is_empty());
+        assert!(super::split_path("//.").is_empty());
+
+        assert!(super::split_path(".").is_empty());
+        assert!(super::split_path("./.").is_empty());
+
+        assert_eq!(super::split_path(" "), [" "]);
+        assert_eq!(super::split_path(".."), [".."]);
+        assert_eq!(super::split_path("cnp"), ["cnp"]);
+
+        assert_eq!(super::split_path("/cnp"), ["cnp"]);
+        assert_eq!(super::split_path("//cnp"), ["cnp"]);
+        assert_eq!(super::split_path("./cnp"), ["cnp"]);
+
+        assert_eq!(super::split_path("cnp/"), ["cnp"]);
+        assert_eq!(super::split_path("cnp//"), ["cnp"]);
+        assert_eq!(super::split_path("cnp/."), ["cnp"]);
+
+        assert_eq!(super::split_path("/cnp/"), ["cnp"]);
+        assert_eq!(super::split_path("//cnp//"), ["cnp"]);
+        assert_eq!(super::split_path("./cnp/."), ["cnp"]);
+
+        assert_eq!(super::split_path("/path/to/cnp"), ["path", "to", "cnp"]);
+        assert_eq!(
+            super::split_path("///path///to///cnp///"),
+            ["path", "to", "cnp"]
+        );
+        assert_eq!(
+            super::split_path("./path/./to/./cnp/."),
+            ["path", "to", "cnp"]
+        );
     }
 }
