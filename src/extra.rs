@@ -32,20 +32,20 @@ impl crate::fs::Hammer2Blockref {
 
     #[must_use]
     pub fn embed_as<T>(&self) -> &T {
-        crate::util::align_to(&self.embed)
+        libfs::cast::align_to(&self.embed)
     }
 
     pub fn embed_as_mut<T>(&mut self) -> &mut T {
-        crate::util::align_to_mut(&mut self.embed)
+        libfs::cast::align_to_mut(&mut self.embed)
     }
 
     #[must_use]
     pub fn check_as<T>(&self) -> &T {
-        crate::util::align_to(&self.check)
+        libfs::cast::align_to(&self.check)
     }
 
     pub fn check_as_mut<T>(&mut self) -> &mut T {
-        crate::util::align_to_mut(&mut self.check)
+        libfs::cast::align_to_mut(&mut self.check)
     }
 }
 
@@ -101,17 +101,17 @@ impl crate::fs::Hammer2InodeMeta {
 
     #[must_use]
     pub fn ctime_as_timeval(&self) -> libc::timeval {
-        crate::os::new_timeval(self.ctime / 1_000_000, self.ctime % 1_000_000)
+        libfs::os::new_timeval(self.ctime / 1_000_000, self.ctime % 1_000_000)
     }
 
     #[must_use]
     pub fn atime_as_timeval(&self) -> libc::timeval {
-        crate::os::new_timeval(self.atime / 1_000_000, self.atime % 1_000_000)
+        libfs::os::new_timeval(self.atime / 1_000_000, self.atime % 1_000_000)
     }
 
     #[must_use]
     pub fn mtime_as_timeval(&self) -> libc::timeval {
-        crate::os::new_timeval(self.mtime / 1_000_000, self.mtime % 1_000_000)
+        libfs::os::new_timeval(self.mtime / 1_000_000, self.mtime % 1_000_000)
     }
 
     #[must_use]
@@ -123,11 +123,11 @@ impl crate::fs::Hammer2InodeMeta {
 impl crate::fs::Hammer2InodeData {
     #[must_use]
     pub fn u_as<T>(&self) -> &T {
-        crate::util::align_to(&self.u)
+        libfs::cast::align_to(&self.u)
     }
 
     pub fn u_as_mut<T>(&mut self) -> &mut T {
-        crate::util::align_to_mut(&mut self.u)
+        libfs::cast::align_to_mut(&mut self.u)
     }
 
     /// # Errors
@@ -172,7 +172,7 @@ impl crate::fs::Hammer2VolumeData {
     /// # Panics
     #[must_use]
     pub fn get_crc(&self, offset: u64, size: u64) -> u32 {
-        let voldata = crate::util::any_as_u8_slice(self);
+        let voldata = libfs::cast::as_u8_slice(self);
         let beg = offset.try_into().unwrap();
         let end = (offset + size).try_into().unwrap();
         icrc32::iscsi_crc32(&voldata[beg..end])
@@ -187,18 +187,18 @@ fn copy_bytes(dst: &mut [u8], src: &[u8]) {
 
 impl crate::ioctl::IocPfs {
     /// # Errors
-    pub fn get_name(&self) -> nix::Result<Vec<u8>> {
-        match crate::util::bin_to_string(&self.name) {
+    pub fn get_name(&self) -> crate::Result<Vec<u8>> {
+        match libfs::string::b2s(&self.name) {
             Ok(v) => Ok(self.name[..v.len()].to_vec()),
             Err(e) => {
                 log::error!("{e}");
-                Err(nix::errno::Errno::EINVAL)
+                Err(nix::errno::Errno::EINVAL.into())
             }
         }
     }
 
     /// # Errors
-    pub fn get_name_lhc(&self) -> nix::Result<u64> {
+    pub fn get_name_lhc(&self) -> crate::Result<u64> {
         Ok(crate::subs::dirhash(&self.get_name()?))
     }
 
@@ -289,15 +289,69 @@ impl crate::hammer2::Hammer2 {
         Ok(cid)
     }
 
-    fn alloc_cidmap_bitmap(&self) -> nix::Result<crate::chain::Cid> {
-        Err(nix::errno::Errno::EOPNOTSUPP) // XXX
+    fn alloc_cidmap_bitmap(&mut self) -> nix::Result<crate::chain::Cid> {
+        if let Some(v) = self.imap.pool.pop() {
+            self.imap.chunk.set(v.try_into().unwrap())?;
+            return Ok(v); // reuse cid in pool
+        }
+        if self.imap.next > self.imap.max {
+            self.imap.next = crate::chain::CID_CHAIN_OFFSET;
+        }
+        let hint = self.imap.next;
+        self.imap.next += 1;
+        let cid = match self.ffas_cid(hint, self.imap.max + 1) {
+            Ok(v) => v,
+            Err(nix::errno::Errno::ENOSPC) => match self.ffas_cid(0, hint) {
+                Ok(v) => v,
+                Err(nix::errno::Errno::ENOSPC) => {
+                    log::error!("no free space left for chain");
+                    return Err(nix::errno::Errno::ENOSPC);
+                }
+                Err(e) => return Err(e),
+            },
+            Err(e) => return Err(e),
+        };
+        Ok(cid)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn free_cid(&mut self, cid: crate::chain::Cid) -> nix::Result<()> {
+        match self.opt.cidalloc {
+            crate::option::CidAllocMode::Linear => Ok(()),
+            crate::option::CidAllocMode::Bitmap => self.free_cidmap_bitmap(cid),
+        }
+    }
+
+    fn free_cidmap_bitmap(&mut self, cid: crate::chain::Cid) -> nix::Result<()> {
+        const CIDMAP_POOL_MAX: usize = 1 << 8;
+        self.imap.chunk.clear(cid.try_into().unwrap())?;
+        if self.imap.pool.len() < CIDMAP_POOL_MAX {
+            self.imap.pool.push(cid);
+        }
+        Ok(())
+    }
+
+    fn ffas_cid(
+        &mut self,
+        start: crate::chain::Cid,
+        end: crate::chain::Cid,
+    ) -> nix::Result<crate::chain::Cid> {
+        let index = self
+            .imap
+            .chunk
+            .set_from_range(start.try_into().unwrap(), end.try_into().unwrap())?;
+        if index == usize::MAX {
+            Err(nix::errno::Errno::ENOSPC)
+        } else {
+            Ok(index.try_into().unwrap())
+        }
     }
 
     /// # Errors
     pub fn readlinkx(&mut self, inum: u64) -> crate::Result<String> {
         let mut buf = vec![0; crate::fs::HAMMER2_INODE_MAXNAME];
         self.readlink(inum, &mut buf)?;
-        match crate::util::bin_to_string(&buf) {
+        match libfs::string::b2s(&buf) {
             Ok(v) => Ok(v),
             Err(e) => {
                 log::error!("{e}");
@@ -317,6 +371,37 @@ impl crate::hammer2::Hammer2 {
     /// # Errors
     pub fn read_all(&mut self, inum: u64) -> crate::Result<Vec<u8>> {
         self.preadx(inum, self.stat(inum)?.st_size, 0)
+    }
+
+    /// # Errors
+    pub fn prune_chain(&mut self) -> crate::Result<(usize, usize)> {
+        let t = (
+            self.prune_chain_impl(crate::chain::CID_VCHAIN)?,
+            self.prune_chain_impl(crate::chain::CID_FCHAIN)?,
+        );
+        log::info!("{:?} chains pruned", [t.0, t.1]);
+        Ok(t)
+    }
+
+    fn prune_chain_impl(&mut self, cid: crate::chain::Cid) -> nix::Result<usize> {
+        let mut total = 0;
+        for &x in &self
+            .cmap
+            .get_mut(&cid)
+            .ok_or(nix::errno::Errno::ENOENT)?
+            .get_child()
+        {
+            total += self.prune_chain_impl(x)?;
+        }
+        let chain = self.cmap.get_mut(&cid).ok_or(nix::errno::Errno::ENOENT)?;
+        if chain.bref.typ == crate::fs::HAMMER2_BREF_TYPE_DATA {
+            let pcid = chain.pcid;
+            let cid = chain.cid;
+            self.remove_chain(pcid, cid)?;
+            assert!(!self.cmap.contains_key(&cid));
+            total += 1;
+        }
+        Ok(total)
     }
 }
 

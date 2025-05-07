@@ -115,11 +115,6 @@ impl Chain {
         self.bytes
     }
 
-    #[must_use]
-    pub fn get_data(&self) -> &Vec<u8> {
-        &self.data
-    }
-
     pub(crate) fn set_data(&mut self, data: Vec<u8>) {
         self.data = data;
     }
@@ -415,7 +410,7 @@ impl Chain {
     }
 
     // Returns true on success, false on failure.
-    pub(crate) fn test_check(&mut self, bdata: &[u8]) -> nix::Result<bool> {
+    pub(crate) fn test_check(&mut self, bdata: &[u8]) -> crate::Result<bool> {
         if self.has_flags(CHAIN_TESTED_GOOD) {
             return Ok(true);
         }
@@ -457,12 +452,13 @@ impl Chain {
         }
     }
 
-    pub(crate) fn as_inode_data(&self) -> &crate::fs::Hammer2InodeData {
+    #[must_use]
+    pub fn as_inode_data(&self) -> &crate::fs::Hammer2InodeData {
         crate::ondisk::media_as_inode_data(&self.data)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn as_volume_data(&self) -> &crate::fs::Hammer2VolumeData {
+    #[must_use]
+    pub fn as_volume_data(&self) -> &crate::fs::Hammer2VolumeData {
         crate::ondisk::media_as_volume_data(&self.data)
     }
 
@@ -542,7 +538,7 @@ impl Chain {
                 } else {
                     &self.data
                 };
-                crate::util::bin_to_string(s).ok()
+                libfs::string::b2s(s).ok()
             }
             _ => None,
         }

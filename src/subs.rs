@@ -2,7 +2,6 @@ use byteorder::ByteOrder;
 use std::os::unix::fs::FileTypeExt;
 
 pub(crate) const DEBUFSIZE: usize = crate::fs::HAMMER2_PBUFSIZE as usize;
-pub(crate) const DEV_BSIZE: u64 = 512;
 
 pub const K: usize = 1024;
 pub const M: usize = K * 1024;
@@ -200,17 +199,17 @@ pub fn get_volume_size(fp: &mut std::fs::File) -> crate::Result<u64> {
         return Err(nix::errno::Errno::EINVAL.into());
     }
 
-    if crate::util::is_linux() || crate::util::is_freebsd() || crate::util::is_solaris() {
-        let size = crate::util::seek_end(fp, 0)?;
+    if libfs::os::is_linux() || libfs::os::is_freebsd() || libfs::os::is_solaris() {
+        let size = libfs::fs::seek_end(fp, 0)?;
         if size == 0 {
             log::error!("{fp:?}: failed to get size");
             return Err(nix::errno::Errno::EINVAL.into());
         }
-        crate::util::seek_set(fp, 0)?;
+        libfs::fs::seek_set(fp, 0)?;
         Ok(size)
     } else {
         // XXX other platforms use ioctl(2)
-        log::error!("{} is unsupported", crate::util::get_os_name());
+        log::error!("{} is unsupported", libfs::os::get_name());
         Err(nix::errno::Errno::EOPNOTSUPP.into())
     }
 }
@@ -265,7 +264,7 @@ pub fn dirhash(aname: &[u8]) -> u64 {
 /// # Errors
 pub fn get_hammer2_mounts() -> Result<Vec<String>, std::string::FromUtf8Error> {
     let mut v = vec![];
-    for (fstypename, mntonname, _) in crate::os::get_mnt_info()? {
+    for (fstypename, mntonname, _) in libfs::os::get_mnt_info()? {
         if fstypename == "hammer2" {
             v.push(mntonname);
         }
@@ -432,7 +431,7 @@ mod tests {
         };
         assert_eq!(super::get_uuid_string(&u), crate::fs::HAMMER2_UUID_STRING);
         assert_eq!(
-            super::get_uuid_string_from_bytes(crate::util::any_as_u8_slice(&u)),
+            super::get_uuid_string_from_bytes(libfs::cast::as_u8_slice(&u)),
             crate::fs::HAMMER2_UUID_STRING
         );
     }

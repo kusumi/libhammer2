@@ -85,6 +85,8 @@ pub struct StatFs {
 pub(crate) struct CidMap {
     pub(crate) next: crate::chain::Cid,
     pub(crate) max: crate::chain::Cid,
+    pub(crate) pool: Vec<crate::chain::Cid>,
+    pub(crate) chunk: libfs::bitmap::Bitmap,
 }
 
 impl CidMap {
@@ -149,7 +151,7 @@ impl Hammer2 {
         Ok(())
     }
 
-    fn remove_chain(
+    pub(crate) fn remove_chain(
         &mut self,
         pcid: crate::chain::Cid,
         cid: crate::chain::Cid,
@@ -512,16 +514,16 @@ impl Hammer2 {
     }
 
     /// # Errors
-    pub fn dump_inode_chain(&self, ip: &crate::inode::Inode) -> nix::Result<()> {
+    pub fn dump_inode_chain(&self, ip: &crate::inode::Inode) -> crate::Result<()> {
         self.dump_chain(ip.cid)
     }
 
     /// # Errors
-    pub fn dump_chain(&self, cid: crate::chain::Cid) -> nix::Result<()> {
+    pub fn dump_chain(&self, cid: crate::chain::Cid) -> crate::Result<()> {
         if std::env::var(HAMMER2_COMPAT).is_ok() {
-            self.dump_chain_impl_compat(cid, 0, 0, -1, 'i')
+            Ok(self.dump_chain_impl_compat(cid, 0, 0, -1, 'i')?)
         } else {
-            self.dump_chain_impl(cid, 0, 0, -1)
+            Ok(self.dump_chain_impl(cid, 0, 0, -1)?)
         }
     }
 
@@ -855,7 +857,7 @@ impl Hammer2 {
         }
         // Only allow mounted PFS to avoid inum collision.
         let mut inum = crate::inode::INUM_PFS_ROOT;
-        for cnp in &crate::util::split_path(path) {
+        for cnp in &libfs::fs::split_path(path) {
             inum = self.nresolve(inum, cnp)?;
         }
         Ok(inum)
@@ -942,7 +944,7 @@ impl Hammer2 {
         }
         assert_eq!(crate::extra::conv_offset_to_radix(arg.offset), 0);
         match self.fso.get_volume_mut(arg.offset) {
-            Some(vol) => Ok(arg.offset - vol.get_offset() / crate::subs::DEV_BSIZE),
+            Some(vol) => Ok(arg.offset - vol.get_offset() / libfs::os::DEV_BSIZE),
             None => Err(nix::errno::Errno::ENODEV.into()),
         }
     }
@@ -1008,7 +1010,7 @@ impl Hammer2 {
         bref.modify_tid = bref.mirror_tid;
 
         let mut chain = crate::chain::Chain::new(&bref, crate::chain::CID_VCHAIN)?;
-        chain.set_data(crate::util::any_as_u8_slice(&self.voldata).to_vec());
+        chain.set_data(libfs::cast::as_u8_slice(&self.voldata).to_vec());
         assert!(!self.cmap.contains_key(&chain.cid));
         assert!(self.cmap.insert(chain.cid, chain).is_none());
         assert!(self.cmap.contains_key(&crate::chain::CID_VCHAIN));
@@ -1032,7 +1034,7 @@ impl Hammer2 {
             | crate::fs::enc_comp(crate::fs::HAMMER2_COMP_NONE);
 
         let mut chain = crate::chain::Chain::new(&bref, crate::chain::CID_FCHAIN)?;
-        chain.set_data(crate::util::any_as_u8_slice(&self.voldata).to_vec());
+        chain.set_data(libfs::cast::as_u8_slice(&self.voldata).to_vec());
         assert!(!self.cmap.contains_key(&chain.cid));
         assert!(self.cmap.insert(chain.cid, chain).is_none());
         assert!(self.cmap.contains_key(&crate::chain::CID_FCHAIN));
@@ -1107,7 +1109,13 @@ impl Hammer2 {
         }
         pmp.imap.max = match pmp.opt.cidalloc {
             crate::option::CidAllocMode::Linear => crate::chain::Cid::MAX - 1,
-            crate::option::CidAllocMode::Bitmap => return Err(nix::errno::Errno::EOPNOTSUPP.into()), // XXX
+            crate::option::CidAllocMode::Bitmap => {
+                let x = 4usize << 20; // 512KB
+                let n = x.div_ceil(libfs::bitmap::BLOCK_BITS) * libfs::bitmap::BLOCK_BITS;
+                log::debug!("imap: {} bits, {} bytes", n, n / 8);
+                pmp.imap.chunk = libfs::bitmap::Bitmap::new(n)?;
+                (n - 1).try_into().unwrap()
+            }
         };
         pmp.init_vchain()?;
         assert_eq!(pmp.cmap.len(), 1);
@@ -1207,6 +1215,15 @@ impl Hammer2 {
         assert_eq!(self.cmap.len(), 1);
         self.remove_fchain()?;
         assert!(self.cmap.is_empty());
+        match self.opt.cidalloc {
+            crate::option::CidAllocMode::Linear => {
+                assert!(self.imap.pool.is_empty());
+                assert!(self.imap.chunk.is_empty());
+            }
+            crate::option::CidAllocMode::Bitmap => {
+                log::debug!("imap: {} pool entries", self.imap.pool.len());
+            }
+        }
         Ok(())
     }
 
@@ -1216,7 +1233,7 @@ impl Hammer2 {
         let Some(ip) = self.nmap.get(&inum) else {
             return Err(nix::errno::Errno::ENOENT.into());
         };
-        let mode: StatMode = match ip.meta.typ {
+        let mode = match ip.meta.typ {
             crate::fs::HAMMER2_OBJTYPE_DIRECTORY => libc::S_IFDIR,
             crate::fs::HAMMER2_OBJTYPE_REGFILE => libc::S_IFREG,
             crate::fs::HAMMER2_OBJTYPE_FIFO => libc::S_IFIFO,
@@ -1240,7 +1257,7 @@ impl Hammer2 {
                 crate::fs::HAMMER2_INODE_BYTES
             } else {
                 ip.meta.size
-            } / crate::subs::DEV_BSIZE,
+            } / libfs::os::DEV_BSIZE,
             st_atime: crate::subs::conv_time_to_timespec(ip.meta.atime),
             st_mtime: crate::subs::conv_time_to_timespec(ip.meta.mtime),
             st_ctime: crate::subs::conv_time_to_timespec(ip.meta.ctime),
@@ -1326,7 +1343,7 @@ mod tests {
                                 let (sum1, is_zero1) = match pmp.read_all(inum) {
                                     Ok(v) => {
                                         assert_eq!(v.len(), st.st_size.try_into().unwrap());
-                                        match crate::util::bin_to_string(&v) {
+                                        match libfs::string::b2s(&v) {
                                             Ok(v) => println!("{v}"),
                                             Err(e) => panic!("{e}"),
                                         }
@@ -1338,7 +1355,7 @@ mod tests {
                                 let (sum2, is_zero2) = match read_all(pmp, inum) {
                                     Ok(v) => {
                                         assert_eq!(v.len(), st.st_size.try_into().unwrap());
-                                        match crate::util::bin_to_string(&v) {
+                                        match libfs::string::b2s(&v) {
                                             Ok(v) => println!("{v}"),
                                             Err(e) => panic!("{e}"),
                                         }

@@ -1,6 +1,6 @@
 [package]
 name = "libhammer2"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 
 [dependencies]
@@ -8,6 +8,7 @@ byteorder = "1.5.0"
 getopts = "0.2.21"
 icrc32 = { git = "https://github.com/kusumi/icrc32" }
 libc = "0.2.167"
+libfs = { git = "https://github.com/kusumi/libfs" }
 log = "0.4.22"
 lz4 = "1.28.1"
 miniz_oxide = { version = "0.8.2", features = ["std"] }

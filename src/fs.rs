@@ -589,7 +589,7 @@ pub fn media_as<T>(media: &[u8]) -> Vec<&T> {
     let n = media.len() / x;
     let mut v = vec![];
     for i in 0..n {
-        v.push(crate::util::align_to::<T>(&media[i * x..(i + 1) * x]));
+        v.push(libfs::cast::align_to::<T>(&media[i * x..(i + 1) * x]));
     }
     v
 }

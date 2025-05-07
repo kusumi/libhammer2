@@ -7,10 +7,8 @@ pub mod ioctl;
 pub mod lz4;
 pub mod ondisk;
 mod option;
-pub mod os;
 pub mod sha;
 pub mod subs;
-pub mod util;
 pub mod volume;
 mod xop;
 pub mod xxhash;
@@ -18,7 +16,7 @@ pub mod zlib;
 
 use std::fmt::Display;
 
-pub const VERSION: [i32; 3] = [0, 4, 0];
+pub const VERSION: [i32; 3] = [0, 4, 1];
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -54,4 +52,9 @@ impl From<nix::errno::Errno> for Error {
 /// # Errors
 pub fn mount(spec: &str, args: &[&str]) -> Result<hammer2::Hammer2> {
     hammer2::Hammer2::mount(spec, args)
+}
+
+#[must_use]
+pub fn is_os_supported() -> bool {
+    libfs::os::is_linux() || libfs::os::is_freebsd()
 }

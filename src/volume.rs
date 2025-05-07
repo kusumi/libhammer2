@@ -22,7 +22,7 @@ impl Volume {
         Ok(Self {
             id,
             path: path.to_string(),
-            fp: crate::util::open(path, readonly)?,
+            fp: libfs::fs::open(path, readonly)?,
             offset,
             size,
         })
@@ -57,7 +57,7 @@ impl Volume {
     /// # Panics
     pub fn pread(&mut self, buf: &mut [u8], offset: u64) -> std::io::Result<()> {
         assert_eq!(offset & (crate::fs::HAMMER2_ALLOC_MIN as u64 - 1), 0);
-        crate::util::seek_set(&mut self.fp, offset)?;
+        libfs::fs::seek_set(&mut self.fp, offset)?;
         self.fp.read_exact(buf)
     }
 
@@ -65,7 +65,7 @@ impl Volume {
     /// # Panics
     pub fn pwrite(&mut self, buf: &[u8], offset: u64) -> std::io::Result<()> {
         assert_eq!(offset & (crate::fs::HAMMER2_ALLOC_MIN as u64 - 1), 0);
-        crate::util::seek_set(&mut self.fp, offset)?;
+        libfs::fs::seek_set(&mut self.fp, offset)?;
         self.fp.write_all(buf)
     }
 
@@ -88,7 +88,7 @@ pub fn get_volume_data_offset(index: usize) -> u64 {
 // Locate a valid volume header.  If any of the four volume headers is good,
 // we have a valid volume header and choose the best one based on mirror_tid.
 pub(crate) fn read_volume_data(path: &str) -> crate::Result<crate::fs::Hammer2VolumeData> {
-    let mut fp = crate::util::open(path, false)?;
+    let mut fp = libfs::fs::open_ro(path)?;
     let size = crate::subs::get_volume_size(&mut fp)?;
     let mut zone = usize::MAX;
     let mut mirror_tid = u64::MAX;
@@ -99,7 +99,7 @@ pub(crate) fn read_volume_data(path: &str) -> crate::Result<crate::fs::Hammer2Vo
         if offset >= size {
             break;
         }
-        crate::util::seek_set(&mut fp, offset)?;
+        libfs::fs::seek_set(&mut fp, offset)?;
         let mut buf = vec![0; crate::fs::HAMMER2_VOLUME_BYTES.try_into().unwrap()];
         fp.read_exact(&mut buf)?;
         let vd = crate::ondisk::media_as_volume_data(&buf);

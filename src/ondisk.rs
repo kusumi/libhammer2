@@ -1,4 +1,4 @@
-use crate::os::MetadataExt;
+use libfs::os::MetadataExt;
 use std::os::unix::fs::FileTypeExt;
 
 #[derive(Debug, Default)]
@@ -555,12 +555,12 @@ fn init_impl(spec: &str, readonly: bool, quiet: bool) -> crate::Result<Ondisk> {
 
 #[must_use]
 pub fn media_as_inode_data(media: &[u8]) -> &crate::fs::Hammer2InodeData {
-    crate::util::align_to(media)
+    libfs::cast::align_to(media)
 }
 
 #[must_use]
 pub fn media_as_volume_data(media: &[u8]) -> &crate::fs::Hammer2VolumeData {
-    crate::util::align_to(media)
+    libfs::cast::align_to(media)
 }
 
 /// # Errors
@@ -617,7 +617,7 @@ fn media_as_blockref_impl<'a>(
 }
 
 /// # Errors
-pub fn verify_media(bref: &crate::fs::Hammer2Blockref, media: &[u8]) -> nix::Result<bool> {
+pub fn verify_media(bref: &crate::fs::Hammer2Blockref, media: &[u8]) -> crate::Result<bool> {
     match crate::fs::dec_check(bref.methods) {
         crate::fs::HAMMER2_CHECK_NONE | crate::fs::HAMMER2_CHECK_DISABLED => Ok(true),
         crate::fs::HAMMER2_CHECK_ISCSI32 => Ok(bref
@@ -638,7 +638,7 @@ pub fn verify_media(bref: &crate::fs::Hammer2Blockref, media: &[u8]) -> nix::Res
             == icrc32::iscsi_crc32(media)),
         _ => {
             log::error!("bad check type {:02x}", bref.methods);
-            Err(nix::errno::Errno::EINVAL)
+            Err(nix::errno::Errno::EINVAL.into())
         }
     }
 }

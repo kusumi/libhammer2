@@ -15,6 +15,7 @@ const IOC_EMERG_MODE: u8 = 95;
 const IOC_GROWFS: u8 = 96;
 const IOC_VOLUME_LIST: u8 = 97;
 const IOC_VOLUME_LIST2: u8 = 197; // Rust
+const IOC_CIDPRUNE: u8 = 240; // Rust
 
 // IOC_VERSION_GET
 #[repr(C)]
@@ -58,7 +59,7 @@ pub struct IocPfs {
     pub reserved0018: u64,
     pub pfs_fsid: [u8; 16], // identifies PFS instance
     pub pfs_clid: [u8; 16], // identifies PFS cluster
-    pub name: [u8; crate::os::NAME_MAX + 1],
+    pub name: [u8; libfs::os::NAME_MAX + 1],
 }
 
 impl Default for IocPfs {
@@ -81,7 +82,7 @@ impl IocPfs {
             reserved0018: 0,
             pfs_fsid: [0; 16],
             pfs_clid: [0; 16],
-            name: [0; crate::os::NAME_MAX + 1],
+            name: [0; libfs::os::NAME_MAX + 1],
         }
     }
 }
@@ -235,7 +236,7 @@ nix::ioctl_readwrite!(growfs, IOC, IOC_GROWFS, IocGrowfs);
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct IocVolume {
-    pub path: [u8; crate::os::MAXPATHLEN],
+    pub path: [u8; libfs::os::MAXPATHLEN],
     pub id: u32,
     pub offset: u64,
     pub size: u64,
@@ -251,7 +252,7 @@ impl IocVolume {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            path: [0; crate::os::MAXPATHLEN],
+            path: [0; libfs::os::MAXPATHLEN],
             id: 0,
             offset: 0,
             size: 0,
@@ -294,7 +295,7 @@ nix::ioctl_readwrite!(volume_list, IOC, IOC_VOLUME_LIST, IocVolumeList);
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct IocVolume2 {
-    pub path: [u8; 64], // XXX crate::os::MAXPATHLEN too long
+    pub path: [u8; 64], // XXX libfs::os::MAXPATHLEN too long
     pub id: u32,
     pub offset: u64,
     pub size: u64,
@@ -348,3 +349,25 @@ impl IocVolumeList2 {
 pub const CMD_VOLUME_LIST2: u64 =
     nix::request_code_readwrite!(IOC, IOC_VOLUME_LIST2, std::mem::size_of::<IocVolumeList2>());
 nix::ioctl_readwrite!(volume_list2, IOC, IOC_VOLUME_LIST2, IocVolumeList2);
+
+// IOC_CIDPRUNE
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct IocCidPrune {
+    pub vchain_total: u64,
+    pub fchain_total: u64,
+    pub unusedary: [u64; 14],
+}
+
+impl IocCidPrune {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            ..Default::default()
+        }
+    }
+}
+
+pub const CMD_CIDPRUNE: u64 =
+    nix::request_code_readwrite!(IOC, IOC_CIDPRUNE, std::mem::size_of::<IocCidPrune>());
+nix::ioctl_readwrite!(cidprune, IOC, IOC_CIDPRUNE, IocCidPrune);
