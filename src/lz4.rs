@@ -1,6 +1,6 @@
 /// # Errors
 pub fn compress(buf: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let mut dst = [0; crate::subs::DEBUFSIZE / 2];
+    let mut dst = vec![0; crate::subs::DEBUFSIZE / 2];
     let res = unsafe {
         lz4::liblz4::LZ4_compress_default(
             std::ptr::from_ref::<[u8]>(buf).cast::<i8>(),
@@ -21,7 +21,7 @@ pub fn compress(buf: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 /// # Panics
 pub fn decompress(buf: &[u8], max_size: usize) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     assert!(max_size <= crate::subs::DEBUFSIZE);
-    let mut dst = [0; crate::subs::DEBUFSIZE + 128];
+    let mut dst = vec![0; crate::subs::DEBUFSIZE + 128];
     let cinsize = i32::from_le_bytes(buf[..4].try_into()?);
     assert!(cinsize <= buf.len().try_into()?);
     let res = unsafe {

@@ -1,7 +1,12 @@
 pub const INUM_SUP_ROOT: u64 = 0;
 pub const INUM_PFS_ROOT: u64 = 1;
 
-pub(crate) const DEFAULT_PFS_LABEL: &str = "DATA";
+pub const PFS_LABEL_BOOT: &str = "BOOT";
+pub const PFS_LABEL_ROOT: &str = "ROOT";
+pub const PFS_LABEL_DATA: &str = "DATA";
+pub const PFS_LABEL_LOCAL: &str = "LOCAL";
+
+pub const PFS_LABEL_DEFAULT: &str = PFS_LABEL_DATA;
 
 #[derive(Debug)]
 pub struct Inode {

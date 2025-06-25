@@ -187,9 +187,9 @@ fn copy_bytes(dst: &mut [u8], src: &[u8]) {
 
 impl crate::ioctl::IocPfs {
     /// # Errors
-    pub fn get_name(&self) -> crate::Result<Vec<u8>> {
+    pub fn get_name(&self) -> crate::Result<&[u8]> {
         match libfs::string::b2s(&self.name) {
-            Ok(v) => Ok(self.name[..v.len()].to_vec()),
+            Ok(v) => Ok(&self.name[..v.len()]),
             Err(e) => {
                 log::error!("{e}");
                 Err(nix::errno::Errno::EINVAL.into())
@@ -199,7 +199,7 @@ impl crate::ioctl::IocPfs {
 
     /// # Errors
     pub fn get_name_lhc(&self) -> crate::Result<u64> {
-        Ok(crate::subs::dirhash(&self.get_name()?))
+        Ok(crate::subs::dirhash(self.get_name()?))
     }
 
     pub fn copy_name(&mut self, name: &[u8]) {

@@ -16,7 +16,7 @@ pub mod zlib;
 
 use std::fmt::Display;
 
-pub const VERSION: [i32; 3] = [0, 4, 1];
+pub const VERSION: [i32; 3] = [0, 4, 2];
 
 pub type Result<T> = std::result::Result<T, Error>;
 

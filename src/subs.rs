@@ -18,20 +18,21 @@ pub const M_F64: f64 = M as f64;
 pub const G_F64: f64 = G as f64;
 pub const T_F64: f64 = T as f64;
 
-const FORCE_STD_EPOCH: &str = "HAMMER2_FORCE_STD_EPOCH";
+fn is_le() -> bool {
+    cfg!(target_endian = "little")
+}
 
-fn get_local_time_delta(t: u64) -> Result<i64, time::error::IndeterminateOffset> {
-    let mut d = i64::from(time::UtcOffset::current_local_offset()?.whole_seconds());
-    if t == 0 && std::env::var(FORCE_STD_EPOCH).is_ok() {
-        d -= 3600;
-    }
-    Ok(d)
+/// # Errors
+pub fn get_local_time_offset() -> Result<i64, time::error::IndeterminateOffset> {
+    Ok(i64::from(
+        time::UtcOffset::current_local_offset()?.whole_seconds(),
+    ))
 }
 
 /// # Panics
 #[must_use]
 pub fn get_local_time_string(t: u64) -> String {
-    get_time_string_impl(t, get_local_time_delta(t).unwrap()).unwrap()
+    get_time_string_impl(t, get_local_time_offset().unwrap()).unwrap()
 }
 
 /// # Panics
@@ -42,15 +43,10 @@ pub fn get_time_string(t: u64) -> String {
 
 fn get_time_string_impl(t: u64, d: i64) -> Result<String, Box<dyn std::error::Error>> {
     let t = i64::try_from(t / 1_000_000)? + d;
-    let t = if t < 0 {
-        std::time::SystemTime::UNIX_EPOCH - std::time::Duration::from_secs((-t).try_into()?)
-    } else {
-        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(t.try_into()?)
-    };
     let fmt = time::format_description::parse(
         "[day]-[month repr:short]-[year] [hour]:[minute]:[second]",
     )?;
-    Ok(time::OffsetDateTime::from(t).format(&fmt)?)
+    Ok(time::OffsetDateTime::from_unix_timestamp(t)?.format(&fmt)?)
 }
 
 #[must_use]
@@ -274,17 +270,13 @@ pub fn get_hammer2_mounts() -> Result<Vec<String>, std::string::FromUtf8Error> {
 
 /// # Errors
 pub fn get_uuid_from_str(s: &str) -> Result<uuid::Uuid, uuid::Error> {
-    let src = *uuid::Uuid::parse_str(s)?.as_bytes();
-    let mut dst = src;
-    dst[0] = src[3]; // 4
-    dst[1] = src[2];
-    dst[2] = src[1];
-    dst[3] = src[0];
-    dst[4] = src[5]; // 2
-    dst[5] = src[4];
-    dst[6] = src[7]; // 2
-    dst[7] = src[6];
-    Ok(uuid::Uuid::from_bytes(dst))
+    let b = *uuid::Uuid::parse_str(s)?.as_bytes();
+    // use host byteorder, no fixed endianness
+    if is_le() {
+        Ok(uuid::Uuid::from_bytes_le(b))
+    } else {
+        Ok(uuid::Uuid::from_bytes(b))
+    }
 }
 
 #[must_use]
@@ -293,13 +285,16 @@ pub fn get_uuid_string(u: &uuid::Uuid) -> String {
 }
 
 #[must_use]
-pub fn get_uuid_string_from_bytes(b: &[u8]) -> String {
-    format!("{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        b[3], b[2], b[1], b[0], // 4
-        b[5], b[4], // 2
-        b[7], b[6], // 2
-        b[8], b[9],
-        b[10], b[11], b[12], b[13], b[14], b[15])
+pub fn get_uuid_string_from_bytes(b: &uuid::Bytes) -> String {
+    // use host byteorder, no fixed endianness
+    let u = if is_le() {
+        uuid::Uuid::from_bytes_le(*b)
+    } else {
+        uuid::Uuid::from_bytes(*b)
+    };
+    (*(u.as_hyphenated()
+        .encode_lower(&mut uuid::Uuid::encode_buffer())))
+    .to_string()
 }
 
 pub(crate) fn conv_time_to_timespec(t: u64) -> u64 {
@@ -317,6 +312,7 @@ pub(crate) fn conv_uuid_to_unix_xid(u: &uuid::Uuid) -> u32 {
 }
 
 pub(crate) fn conv_uuid_to_unix_xid_from_bytes(b: &[u8]) -> u32 {
+    // use host byteorder, no fixed endianness
     byteorder::NativeEndian::read_u32(&b[12..])
 }
 
@@ -327,6 +323,7 @@ pub(crate) fn conv_unix_xid_to_uuid(xid: u32) -> uuid::Uuid {
 
 pub(crate) fn conv_unix_xid_to_uuid_bytes(xid: u32) -> [u8; 16] {
     let mut uuid = [0; 16];
+    // use host byteorder, no fixed endianness
     byteorder::NativeEndian::write_u32_into(&[xid], &mut uuid[12..]);
     uuid
 }
@@ -431,7 +428,7 @@ mod tests {
         };
         assert_eq!(super::get_uuid_string(&u), crate::fs::HAMMER2_UUID_STRING);
         assert_eq!(
-            super::get_uuid_string_from_bytes(libfs::cast::as_u8_slice(&u)),
+            super::get_uuid_string_from_bytes(u.as_bytes()),
             crate::fs::HAMMER2_UUID_STRING
         );
     }

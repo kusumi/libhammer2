@@ -179,7 +179,7 @@ impl Chain {
         }
         let mut beg = 0;
         let mut end = self.ccids.len() - 1;
-        let mut i = (beg + end) / 2;
+        let mut i = usize::midpoint(beg, end);
         while beg <= end {
             let x2_beg = self.ccids[i].key;
             let x2_end = x2_beg + (1 << self.ccids[i].keybits) - 1;
@@ -198,7 +198,7 @@ impl Chain {
                 }
                 std::cmp::Ordering::Equal => return Some(i), // first found
             }
-            i = (beg + end) / 2;
+            i = usize::midpoint(beg, end);
         }
         None
     }

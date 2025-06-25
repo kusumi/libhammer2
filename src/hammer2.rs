@@ -30,6 +30,8 @@ pub const RESOLVE_MAYBE: u32 = 2;
 pub const RESOLVE_ALWAYS: u32 = 3;
 const RESOLVE_MASK: u32 = 0x0F;
 
+const NOOFFSET: u64 = u64::MAX;
+
 #[derive(Debug)]
 pub struct Dirent {
     pub inum: u64,
@@ -802,13 +804,15 @@ impl Hammer2 {
         if pcid == crate::chain::CID_NONE {
             return Err(nix::errno::Errno::EIO.into());
         }
-        let (mut pcid, mut cid, _) = self.lookup_chain(pcid, arg.lkey, arg.lkey, 0)?;
+        let (mut pcid, mut cid, _) = self.lookup_chain(pcid, arg.lkey, arg.lkey, LOOKUP_ALWAYS)?;
         if cid == crate::chain::CID_NONE {
-            (pcid, cid, _) = self.lookup_chain(pcid, arg.lkey, crate::fs::HAMMER2_KEY_MAX, 0)?;
+            (pcid, cid, _) =
+                self.lookup_chain(pcid, arg.lkey, crate::fs::HAMMER2_KEY_MAX, LOOKUP_ALWAYS)?;
         }
         while cid != crate::chain::CID_NONE {
             arg.head.feed(cid);
-            (pcid, cid, _) = self.get_next_chain(pcid, cid, crate::fs::HAMMER2_KEY_MAX, 0)?;
+            (pcid, cid, _) =
+                self.get_next_chain(pcid, cid, crate::fs::HAMMER2_KEY_MAX, LOOKUP_ALWAYS)?;
         }
         Ok(())
     }
@@ -820,14 +824,12 @@ impl Hammer2 {
         if pcid == crate::chain::CID_NONE {
             return Err(nix::errno::Errno::EIO.into());
         }
-        // CID_NONE isn't necessarily an error.
-        // It could be a zero filled data without physical block assigned.
         arg.offset = crate::fs::HAMMER2_OFF_MASK;
-        let (_, cid, _) = self.lookup_chain(pcid, lbase, lbase, LOOKUP_ALWAYS)?;
+        let (_, cid, _) = self.lookup_chain(pcid, lbase, lbase, 0)?;
         if cid == crate::chain::CID_NONE {
             return Err(nix::errno::Errno::ENOENT.into());
         }
-        arg.offset = get_chain!(self, &cid).bref.get_raw_data_off();
+        arg.offset = get_chain!(self, &cid).bref.data_off;
         arg.head.feed(cid);
         Ok(())
     }
@@ -938,15 +940,16 @@ impl Hammer2 {
     /// # Panics
     pub fn bmap(&mut self, inum: u64, lbn: u64) -> crate::Result<u64> {
         let mut arg = crate::xop::XopBmap::new(inum, lbn);
-        self.xop_bmap(&mut arg)?;
-        if arg.offset == crate::fs::HAMMER2_OFF_MASK {
-            return Err(nix::errno::Errno::EINVAL.into());
+        if let Err(e) = self.xop_bmap(&mut arg) {
+            match e {
+                crate::Error::Errno(nix::errno::Errno::ENOENT) => return Ok(NOOFFSET),
+                _ => return Err(e),
+            }
         }
-        assert_eq!(crate::extra::conv_offset_to_radix(arg.offset), 0);
-        match self.fso.get_volume_mut(arg.offset) {
-            Some(vol) => Ok(arg.offset - vol.get_offset() / libfs::os::DEV_BSIZE),
-            None => Err(nix::errno::Errno::ENODEV.into()),
-        }
+        assert_ne!(arg.offset, crate::fs::HAMMER2_OFF_MASK);
+        assert_ne!(arg.offset, NOOFFSET);
+        assert_ne!(crate::extra::conv_offset_to_radix(arg.offset), 0);
+        Ok(arg.offset)
     }
 
     /// # Errors
@@ -1084,12 +1087,12 @@ impl Hammer2 {
         // Parse label.
         let (spec, label) = if let Some(i) = spec.find('@') {
             if i == spec.len() - 1 {
-                (&spec[..i], crate::inode::DEFAULT_PFS_LABEL)
+                (&spec[..i], crate::inode::PFS_LABEL_DEFAULT)
             } else {
                 (&spec[..i], &spec[i + 1..])
             }
         } else {
-            (spec, crate::inode::DEFAULT_PFS_LABEL)
+            (spec, crate::inode::PFS_LABEL_DEFAULT)
         };
         log::debug!("spec \"{spec}\" label \"{label}\"");
         if spec.is_empty() {
@@ -1366,22 +1369,18 @@ mod tests {
                                 log::info!("sha256: {sum2}");
                                 assert_eq!(sum1, sum2);
                                 assert_eq!(is_zero1, is_zero2);
-                                if !is_zero1 {
-                                    match pmp.bmap(inum, 0) {
-                                        Ok(v) => log::info!("{v:016x}"),
-                                        Err(e) => panic!("{e}"),
-                                    }
+                                match pmp.bmap(inum, 0) {
+                                    Ok(v) => log::info!("{v:016x}"),
+                                    Err(e) => panic!("{e}"),
                                 }
                             }
                             libc::S_IFLNK => match pmp.readlinkx(inum) {
                                 Ok(v) => {
                                     log::info!("\"{v}\"");
                                     assert_eq!(v.len(), st.st_size.try_into().unwrap());
-                                    if !is_zero(v.as_bytes()) {
-                                        match pmp.bmap(inum, 0) {
-                                            Ok(v) => log::info!("{v:016x}"),
-                                            Err(e) => panic!("{e}"),
-                                        }
+                                    match pmp.bmap(inum, 0) {
+                                        Ok(v) => log::info!("{v:016x}"),
+                                        Err(e) => panic!("{e}"),
                                     }
                                 }
                                 Err(e) => panic!("{e}"),

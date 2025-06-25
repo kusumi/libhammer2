@@ -127,17 +127,17 @@ impl Ondisk {
             }
             if self.ident.fsid != voldata.fsid {
                 log::error!(
-                    "volume fsid UUID mismatch {:?} vs {:?}",
-                    self.ident.fsid,
-                    voldata.fsid
+                    "volume fsid UUID mismatch {} vs {}",
+                    crate::subs::get_uuid_string_from_bytes(&self.ident.fsid),
+                    crate::subs::get_uuid_string_from_bytes(&voldata.fsid)
                 );
                 return Err(nix::errno::Errno::EINVAL.into());
             }
             if self.ident.fstype != voldata.fstype {
                 log::error!(
-                    "volume fstype UUID mismatch {:?} vs {:?}",
-                    self.ident.fstype,
-                    voldata.fstype
+                    "volume fstype UUID mismatch {} vs {}",
+                    crate::subs::get_uuid_string_from_bytes(&self.ident.fstype),
+                    crate::subs::get_uuid_string_from_bytes(&voldata.fstype)
                 );
                 return Err(nix::errno::Errno::EINVAL.into());
             }
@@ -165,12 +165,11 @@ impl Ondisk {
                 );
                 return Err(nix::errno::Errno::EINVAL.into());
             }
-            if crate::subs::get_uuid_string_from_bytes(&rootvoldata.fstype)
-                != crate::fs::HAMMER2_UUID_STRING
-            {
+            let s = crate::subs::get_uuid_string_from_bytes(&rootvoldata.fstype);
+            if s != crate::fs::HAMMER2_UUID_STRING {
                 log::error!(
-                    "volume fstype UUID {:?} must be {}",
-                    rootvoldata.fstype,
+                    "volume fstype UUID {} must be {}",
+                    s,
                     crate::fs::HAMMER2_UUID_STRING
                 );
                 return Err(nix::errno::Errno::EINVAL.into());
