@@ -17,5 +17,7 @@ test:
 	cargo test --release
 test_debug:
 	cargo test --release -- --nocapture
+doc:
+	cargo doc --no-deps
 
 xxx:	fmt lint test

@@ -1,3 +1,5 @@
+use crate::ErrorExt;
+
 pub type Cid = u64;
 
 pub const CID_NONE: Cid = 0;
@@ -65,7 +67,7 @@ impl Chain {
     pub(crate) fn new(bref: &crate::fs::Hammer2Blockref, cid: Cid) -> nix::Result<Self> {
         // Special case - radix of 0 indicates a chain that does not
         // need a data reference (context is completely embedded in the bref).
-        let radix = bref.get_radix();
+        let radix = bref.get_radix()?;
         let bytes = if radix != 0 { 1 << radix } else { 0 };
         match bref.typ {
             crate::fs::HAMMER2_BREF_TYPE_INODE
@@ -482,7 +484,7 @@ impl Chain {
             crate::fs::HAMMER2_BREF_TYPE_INODE => {
                 // Ignore garbage beyond inode size.
                 let ipdata = self.as_inode_data();
-                Ok(ipdata.u[..ipdata.meta.size.try_into().unwrap()].to_vec())
+                Ok(ipdata.u[..ipdata.meta.size.try_into().or_nix_range()?].to_vec())
             }
             crate::fs::HAMMER2_BREF_TYPE_DATA => self.decompress_data(),
             _ => {
@@ -493,10 +495,10 @@ impl Chain {
     }
 
     fn decompress_data(&self) -> nix::Result<Vec<u8>> {
-        let max_size = crate::fs::HAMMER2_PBUFSIZE.try_into().unwrap();
+        let max_size = crate::fs::HAMMER2_PBUFSIZE.try_into().or_nix_range()?;
         match crate::fs::dec_comp(self.bref.methods) {
             crate::fs::HAMMER2_COMP_NONE => {
-                let n = usize::try_from(self.bytes).unwrap();
+                let n = usize::try_from(self.bytes).or_nix_range()?;
                 assert!(n <= self.data.len());
                 Ok(self.data[..n].to_vec())
             }

@@ -1,3 +1,4 @@
+use crate::ErrorExt;
 use std::io::Read;
 use std::io::Write;
 
@@ -12,7 +13,9 @@ pub struct Volume {
 
 impl Drop for Volume {
     fn drop(&mut self) {
-        self.fsync().unwrap();
+        if let Err(e) = self.fsync() {
+            log::error!("{e}");
+        }
     }
 }
 
@@ -54,35 +57,37 @@ impl Volume {
     }
 
     /// # Errors
-    /// # Panics
-    pub fn pread(&mut self, buf: &mut [u8], offset: u64) -> std::io::Result<()> {
-        assert_eq!(offset & (crate::fs::HAMMER2_ALLOC_MIN as u64 - 1), 0);
+    pub fn pread(&mut self, buf: &mut [u8], offset: u64) -> crate::Result<()> {
+        if offset & (u64::try_from(crate::fs::HAMMER2_ALLOC_MIN).or_range()? - 1) != 0 {
+            log::error!("invalid offset {offset:x}");
+            return Err(nix::errno::Errno::EINVAL.into());
+        }
         libfs::fs::seek_set(&mut self.fp, offset)?;
-        self.fp.read_exact(buf)
+        Ok(self.fp.read_exact(buf)?)
     }
 
     /// # Errors
-    /// # Panics
-    pub fn pwrite(&mut self, buf: &[u8], offset: u64) -> std::io::Result<()> {
-        assert_eq!(offset & (crate::fs::HAMMER2_ALLOC_MIN as u64 - 1), 0);
+    pub fn pwrite(&mut self, buf: &[u8], offset: u64) -> crate::Result<()> {
+        if offset & (u64::try_from(crate::fs::HAMMER2_ALLOC_MIN).or_range()? - 1) != 0 {
+            log::error!("invalid offset {offset:x}");
+            return Err(nix::errno::Errno::EINVAL.into());
+        }
         libfs::fs::seek_set(&mut self.fp, offset)?;
-        self.fp.write_all(buf)
+        Ok(self.fp.write_all(buf)?)
     }
 
     /// # Errors
-    /// # Panics
-    pub fn preadx(&mut self, size: u64, offset: u64) -> std::io::Result<Vec<u8>> {
-        let mut buf = vec![0; size.try_into().unwrap()];
+    pub fn preadx(&mut self, size: u64, offset: u64) -> crate::Result<Vec<u8>> {
+        let mut buf = vec![0; size.try_into().or_range()?];
         self.pread(&mut buf, offset)?;
         Ok(buf)
     }
 }
 
 // get volume data offset relative to a volume
-/// # Panics
-#[must_use]
-pub fn get_volume_data_offset(index: usize) -> u64 {
-    u64::try_from(index).unwrap() * crate::fs::HAMMER2_ZONE_BYTES
+/// # Errors
+pub fn get_volume_data_offset(index: usize) -> nix::Result<u64> {
+    Ok(u64::try_from(index).or_nix_range()? * crate::fs::HAMMER2_ZONE_BYTES)
 }
 
 // Locate a valid volume header.  If any of the four volume headers is good,
@@ -95,12 +100,12 @@ pub(crate) fn read_volume_data(path: &str) -> crate::Result<crate::fs::Hammer2Vo
     let mut v = vec![];
 
     for i in 0..crate::fs::HAMMER2_NUM_VOLHDRS {
-        let offset = get_volume_data_offset(i);
+        let offset = get_volume_data_offset(i)?;
         if offset >= size {
             break;
         }
         libfs::fs::seek_set(&mut fp, offset)?;
-        let mut buf = vec![0; crate::fs::HAMMER2_VOLUME_BYTES.try_into().unwrap()];
+        let mut buf = vec![0; crate::fs::HAMMER2_VOLUME_BYTES.try_into().or_range()?];
         fp.read_exact(&mut buf)?;
         let vd = crate::ondisk::media_as_volume_data(&buf);
         // verify volume header magic
@@ -120,7 +125,7 @@ pub(crate) fn read_volume_data(path: &str) -> crate::Result<crate::fs::Hammer2Vo
         let b = vd.get_crc(
             crate::fs::HAMMER2_VOLUME_ICRC0_OFF,
             crate::fs::HAMMER2_VOLUME_ICRC0_SIZE,
-        );
+        )?;
         if a != b {
             log::error!("{path} #{i}: volume header crc mismatch sect0 {a:08x}/{b:08x}");
             continue;
@@ -129,7 +134,7 @@ pub(crate) fn read_volume_data(path: &str) -> crate::Result<crate::fs::Hammer2Vo
         let b = vd.get_crc(
             crate::fs::HAMMER2_VOLUME_ICRC1_OFF,
             crate::fs::HAMMER2_VOLUME_ICRC1_SIZE,
-        );
+        )?;
         if a != b {
             log::error!("{path} #{i}: volume header crc mismatch sect1 {a:08x}/{b:08x}");
             continue;
@@ -138,7 +143,7 @@ pub(crate) fn read_volume_data(path: &str) -> crate::Result<crate::fs::Hammer2Vo
         let b = vd.get_crc(
             crate::fs::HAMMER2_VOLUME_ICRCVH_OFF,
             crate::fs::HAMMER2_VOLUME_ICRCVH_SIZE,
-        );
+        )?;
         if a != b {
             log::error!("{path} #{i}: volume header crc mismatch vh {a:08x}/{b:08x}");
             continue;

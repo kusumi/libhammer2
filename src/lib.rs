@@ -16,7 +16,7 @@ pub mod zlib;
 
 use std::fmt::Display;
 
-pub const VERSION: [i32; 3] = [0, 4, 2];
+pub const VERSION: [i32; 3] = [0, 5, 0];
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -24,6 +24,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     Error(std::io::Error),
     Errno(nix::errno::Errno),
+    Dyn(Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
 impl Display for Error {
@@ -31,6 +32,7 @@ impl Display for Error {
         match self {
             Self::Error(e) => write!(f, "{e}"),
             Self::Errno(e) => write!(f, "{e}"),
+            Self::Dyn(e) => write!(f, "{e}"),
         }
     }
 }
@@ -46,6 +48,46 @@ impl From<std::io::Error> for Error {
 impl From<nix::errno::Errno> for Error {
     fn from(e: nix::errno::Errno) -> Self {
         Self::Errno(e)
+    }
+}
+
+pub trait OptionExt<T> {
+    /// # Errors
+    fn or_range(self) -> Result<T>;
+
+    /// # Errors
+    fn or_nix_range(self) -> nix::Result<T>;
+}
+
+impl<T> OptionExt<T> for Option<T> {
+    #[inline]
+    fn or_range(self) -> Result<T> {
+        self.ok_or(Error::Errno(nix::errno::Errno::ERANGE))
+    }
+
+    #[inline]
+    fn or_nix_range(self) -> nix::Result<T> {
+        self.ok_or(nix::errno::Errno::ERANGE)
+    }
+}
+
+pub trait ErrorExt<T> {
+    /// # Errors
+    fn or_range(self) -> Result<T>;
+
+    /// # Errors
+    fn or_nix_range(self) -> nix::Result<T>;
+}
+
+impl<T, E> ErrorExt<T> for std::result::Result<T, E> {
+    #[inline]
+    fn or_range(self) -> Result<T> {
+        self.map_err(|_| Error::Errno(nix::errno::Errno::ERANGE))
+    }
+
+    #[inline]
+    fn or_nix_range(self) -> nix::Result<T> {
+        self.map_err(|_| nix::errno::Errno::ERANGE)
     }
 }
 

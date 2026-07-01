@@ -12,7 +12,7 @@ pub const PFS_LABEL_DEFAULT: &str = PFS_LABEL_DATA;
 pub struct Inode {
     pub(crate) meta: crate::fs::Hammer2InodeMeta,
     pub(crate) cid: crate::chain::Cid, // Rust
-    refs: isize,
+    refs: usize,
 }
 
 impl Inode {
@@ -33,44 +33,26 @@ impl Inode {
         &self.meta
     }
 
-    /// # Panics
-    pub fn get(&mut self) {
-        assert!(
-            self.get_impl().is_ok(),
-            "cid {} refs {} meta {:#?}",
-            self.cid,
-            self.refs,
-            self.meta
-        );
-    }
-
-    fn get_impl(&mut self) -> nix::Result<()> {
-        if self.refs < isize::MAX {
-            self.refs += 1;
-            Ok(())
+    /// # Errors
+    pub fn get(&mut self) -> nix::Result<()> {
+        self.refs = if let Some(v) = self.refs.checked_add(1) {
+            v
         } else {
-            Err(nix::errno::Errno::EINVAL)
-        }
+            log::error!("cid {} refs {} meta {:#?}", self.cid, self.refs, self.meta);
+            return Err(nix::errno::Errno::EINVAL);
+        };
+        Ok(())
     }
 
-    /// # Panics
-    pub fn put(&mut self) {
-        assert!(
-            self.put_impl().is_ok(),
-            "cid {} refs {} meta {:#?}",
-            self.cid,
-            self.refs,
-            self.meta
-        );
-    }
-
-    fn put_impl(&mut self) -> nix::Result<()> {
-        if self.refs > 0 {
-            self.refs -= 1;
-            Ok(())
+    /// # Errors
+    pub fn put(&mut self) -> nix::Result<()> {
+        self.refs = if let Some(v) = self.refs.checked_sub(1) {
+            v
         } else {
-            Err(nix::errno::Errno::EINVAL)
-        }
+            log::error!("cid {} refs {} meta {:#?}", self.cid, self.refs, self.meta);
+            return Err(nix::errno::Errno::EINVAL);
+        };
+        Ok(())
     }
 
     #[must_use]
@@ -85,16 +67,16 @@ mod tests {
     fn test_inode_get_put() {
         let mut ip = super::Inode::new_empty();
         assert_eq!(ip.refs, 0);
-        assert!(ip.get_impl().is_ok());
+        assert!(ip.get().is_ok());
         assert_eq!(ip.refs, 1);
-        assert!(ip.get_impl().is_ok());
+        assert!(ip.get().is_ok());
         assert_eq!(ip.refs, 2);
-        assert!(ip.put_impl().is_ok());
+        assert!(ip.put().is_ok());
         assert_eq!(ip.refs, 1);
-        assert!(ip.put_impl().is_ok());
+        assert!(ip.put().is_ok());
         assert_eq!(ip.refs, 0);
-        assert!(ip.put_impl().is_err());
+        assert!(ip.put().is_err());
         assert_eq!(ip.refs, 0);
-        assert!(ip.put_impl().is_err());
+        assert!(ip.put().is_err());
     }
 }

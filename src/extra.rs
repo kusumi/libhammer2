@@ -1,7 +1,10 @@
+use crate::ErrorExt;
 use std::fmt;
 
-pub(crate) fn conv_offset_to_radix(x: u64) -> u8 {
-    (x & crate::fs::HAMMER2_OFF_MASK_RADIX).try_into().unwrap()
+pub(crate) fn conv_offset_to_radix(x: u64) -> nix::Result<u8> {
+    (x & crate::fs::HAMMER2_OFF_MASK_RADIX)
+        .try_into()
+        .or_nix_range()
 }
 
 pub(crate) fn conv_offset_to_raw_data_off(x: u64) -> u64 {
@@ -20,8 +23,8 @@ impl crate::fs::Hammer2Blockref {
             || self.typ == crate::fs::HAMMER2_BREF_TYPE_FREEMAP_LEAF
     }
 
-    #[must_use]
-    pub fn get_radix(&self) -> u8 {
+    /// # Errors
+    pub fn get_radix(&self) -> nix::Result<u8> {
         conv_offset_to_radix(self.data_off)
     }
 
@@ -159,23 +162,24 @@ impl fmt::Display for crate::fs::Hammer2InodeData {
 }
 
 impl crate::fs::Hammer2VolumeData {
-    /// # Panics
-    #[must_use]
-    pub fn is_hbo(&self) -> bool {
-        match self.magic {
+    /// # Errors
+    pub fn is_hbo(&self) -> nix::Result<bool> {
+        Ok(match self.magic {
             crate::fs::HAMMER2_VOLUME_ID_HBO => true,
             crate::fs::HAMMER2_VOLUME_ID_ABO => false,
-            _ => panic!("{:x}", self.magic),
-        }
+            _ => {
+                log::error!("{:x}", self.magic);
+                return Err(nix::errno::Errno::EINVAL);
+            }
+        })
     }
 
-    /// # Panics
-    #[must_use]
-    pub fn get_crc(&self, offset: u64, size: u64) -> u32 {
+    /// # Errors
+    pub fn get_crc(&self, offset: u64, size: u64) -> nix::Result<u32> {
         let voldata = libfs::cast::as_u8_slice(self);
-        let beg = offset.try_into().unwrap();
-        let end = (offset + size).try_into().unwrap();
-        icrc32::iscsi_crc32(&voldata[beg..end])
+        let beg = offset.try_into().or_nix_range()?;
+        let end = (offset + size).try_into().or_nix_range()?;
+        Ok(icrc32::iscsi_crc32(&voldata[beg..end]))
     }
 }
 
@@ -187,18 +191,18 @@ fn copy_bytes(dst: &mut [u8], src: &[u8]) {
 
 impl crate::ioctl::IocPfs {
     /// # Errors
-    pub fn get_name(&self) -> crate::Result<&[u8]> {
+    pub fn get_name(&self) -> nix::Result<&[u8]> {
         match libfs::string::b2s(&self.name) {
             Ok(v) => Ok(&self.name[..v.len()]),
             Err(e) => {
                 log::error!("{e}");
-                Err(nix::errno::Errno::EINVAL.into())
+                Err(nix::errno::Errno::EINVAL)
             }
         }
     }
 
     /// # Errors
-    pub fn get_name_lhc(&self) -> crate::Result<u64> {
+    pub fn get_name_lhc(&self) -> nix::Result<u64> {
         Ok(crate::subs::dirhash(self.get_name()?))
     }
 
@@ -291,7 +295,7 @@ impl crate::hammer2::Hammer2 {
 
     fn alloc_cidmap_bitmap(&mut self) -> nix::Result<crate::chain::Cid> {
         if let Some(v) = self.imap.pool.pop() {
-            self.imap.chunk.set(v.try_into().unwrap())?;
+            self.imap.chunk.set(v.try_into().or_nix_range()?)?;
             return Ok(v); // reuse cid in pool
         }
         if self.imap.next > self.imap.max {
@@ -324,7 +328,7 @@ impl crate::hammer2::Hammer2 {
 
     fn free_cidmap_bitmap(&mut self, cid: crate::chain::Cid) -> nix::Result<()> {
         const CIDMAP_POOL_MAX: usize = 1 << 8;
-        self.imap.chunk.clear(cid.try_into().unwrap())?;
+        self.imap.chunk.clear(cid.try_into().or_nix_range()?)?;
         if self.imap.pool.len() < CIDMAP_POOL_MAX {
             self.imap.pool.push(cid);
         }
@@ -336,14 +340,14 @@ impl crate::hammer2::Hammer2 {
         start: crate::chain::Cid,
         end: crate::chain::Cid,
     ) -> nix::Result<crate::chain::Cid> {
-        let index = self
-            .imap
-            .chunk
-            .set_from_range(start.try_into().unwrap(), end.try_into().unwrap())?;
+        let index = self.imap.chunk.set_from_range(
+            start.try_into().or_nix_range()?,
+            end.try_into().or_nix_range()?,
+        )?;
         if index == usize::MAX {
             Err(nix::errno::Errno::ENOSPC)
         } else {
-            Ok(index.try_into().unwrap())
+            Ok(index.try_into().or_nix_range()?)
         }
     }
 
@@ -361,11 +365,10 @@ impl crate::hammer2::Hammer2 {
     }
 
     /// # Errors
-    /// # Panics
     pub fn preadx(&mut self, inum: u64, size: u64, offset: u64) -> crate::Result<Vec<u8>> {
-        let mut buf = vec![0; size.try_into().unwrap()];
+        let mut buf = vec![0; size.try_into().or_range()?];
         let n = self.pread(inum, &mut buf, offset)?;
-        Ok(buf[..n.try_into().unwrap()].to_vec())
+        Ok(buf[..n.try_into().or_range()?].to_vec())
     }
 
     /// # Errors
@@ -408,7 +411,7 @@ impl crate::hammer2::Hammer2 {
 #[cfg(test)]
 mod tests {
     macro_rules! eq {
-        ($val: expr, $ptr: expr) => {
+        ($val: expr_2021, $ptr: expr_2021) => {
             let a = format!("{:?}", std::ptr::addr_of!($val));
             let b = format!("{:?}", std::ptr::from_ref($ptr));
             assert_eq!(a, b);

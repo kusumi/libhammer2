@@ -1,3 +1,4 @@
+use crate::ErrorExt;
 use libfs::os::MetadataExt;
 use std::os::unix::fs::FileTypeExt;
 
@@ -474,7 +475,7 @@ impl Ondisk {
             let mut index = usize::MAX;
             let mut best = crate::fs::Hammer2VolumeData::new();
             for j in 0..crate::fs::HAMMER2_NUM_VOLHDRS {
-                let offset = crate::volume::get_volume_data_offset(j);
+                let offset = crate::volume::get_volume_data_offset(j)?;
                 if offset < vol.get_size() {
                     let buf = vol.preadx(crate::fs::HAMMER2_VOLUME_BYTES, offset)?;
                     let voldata = crate::ondisk::media_as_volume_data(&buf);
@@ -498,9 +499,8 @@ impl Ondisk {
     }
 
     /// # Errors
-    /// # Panics
     pub fn read_media(&mut self, bref: &crate::fs::Hammer2Blockref) -> crate::Result<Vec<u8>> {
-        let radix = bref.get_radix();
+        let radix = bref.get_radix()?;
         let bytes = if radix == 0 { 0 } else { 1 << radix };
         if bytes == 0 {
             return Ok(vec![]);
@@ -518,8 +518,8 @@ impl Ondisk {
         let vol = self
             .get_volume_mut(io_off)
             .ok_or::<crate::Error>(nix::errno::Errno::ENODEV.into())?;
-        let beg = usize::try_from(boff).unwrap();
-        let end = usize::try_from(boff + bytes).unwrap();
+        let beg = usize::try_from(boff).or_range()?;
+        let end = usize::try_from(boff + bytes).or_range()?;
         Ok(vol.preadx(io_bytes, io_base - vol.get_offset())?[beg..end].to_vec())
     }
 }

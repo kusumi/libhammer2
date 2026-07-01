@@ -1,26 +1,5 @@
-macro_rules! get_chain {
-    ($pmp:expr, $cid:expr) => {
-        $pmp.cmap.get($cid).unwrap()
-    };
-}
-
-macro_rules! get_chain_mut {
-    ($pmp:expr, $cid:expr) => {
-        $pmp.cmap.get_mut($cid).unwrap()
-    };
-}
-
-macro_rules! get_inode {
-    ($pmp:expr, $inum:expr) => {
-        $pmp.nmap.get($inum).unwrap()
-    };
-}
-
-macro_rules! get_inode_mut {
-    ($pmp:expr, $inum:expr) => {
-        $pmp.nmap.get_mut($inum).unwrap()
-    };
-}
+use crate::ErrorExt;
+use crate::OptionExt;
 
 const HAMMER2_COMPAT: &str = "HAMMER2_COMPAT";
 
@@ -115,7 +94,9 @@ impl Drop for Hammer2 {
     fn drop(&mut self) {
         if !self.cmap.is_empty() {
             log::debug!("unmount {} on drop", self.label);
-            self.unmount().unwrap();
+            if let Err(e) = self.unmount() {
+                log::error!("{e}");
+            }
         }
     }
 }
@@ -148,7 +129,7 @@ impl Hammer2 {
         assert_ne!(chain.cid, crate::chain::CID_FCHAIN);
         assert_eq!(chain.pcid, crate::chain::CID_NONE);
         chain.pcid = pcid;
-        get_chain_mut!(self, &pcid).add_child(&chain);
+        self.cmap.get_mut(&pcid).or_nix_range()?.add_child(&chain);
         assert!(self.cmap.insert(chain.cid, chain).is_none());
         Ok(())
     }
@@ -162,7 +143,7 @@ impl Hammer2 {
         assert_ne!(cid, crate::chain::CID_VCHAIN);
         assert_ne!(cid, crate::chain::CID_FCHAIN);
         assert_ne!(pcid, crate::chain::CID_NONE);
-        get_chain_mut!(self, &pcid).remove_child(cid)?;
+        self.cmap.get_mut(&pcid).or_nix_range()?.remove_child(cid)?;
         match self.cmap.remove(&cid) {
             Some(chain) => Ok(chain),
             None => Err(nix::errno::Errno::ENOENT),
@@ -175,7 +156,7 @@ impl Hammer2 {
     }
 
     fn clear_chain_impl(&mut self, cid: crate::chain::Cid) -> nix::Result<()> {
-        while let Some(ccid) = get_chain!(self, &cid).get_first_child() {
+        while let Some(ccid) = self.cmap.get(&cid).or_nix_range()?.get_first_child() {
             self.clear_chain_impl(ccid)?;
             let chain = self.remove_chain(cid, ccid)?;
             if chain.bref.typ == crate::fs::HAMMER2_BREF_TYPE_INODE {
@@ -228,7 +209,7 @@ impl Hammer2 {
         // Other blockref types expects the data to be there.
         match how & RESOLVE_MASK {
             RESOLVE_MAYBE => {
-                if get_chain!(self, &cid).bref.typ == crate::fs::HAMMER2_BREF_TYPE_DATA {
+                if self.cmap.get(&cid).or_range()?.bref.typ == crate::fs::HAMMER2_BREF_TYPE_DATA {
                     return Ok(());
                 }
             }
@@ -238,7 +219,7 @@ impl Hammer2 {
                 return Err(nix::errno::Errno::EINVAL.into());
             }
         }
-        let chain = get_chain_mut!(self, &cid);
+        let chain = self.cmap.get_mut(&cid).or_range()?;
         if chain.has_data() {
             return Ok(());
         }
@@ -283,7 +264,7 @@ impl Hammer2 {
         cid: crate::chain::Cid,
         how: u32,
     ) -> crate::Result<crate::chain::Cid> {
-        let pcid = get_chain!(self, &cid).pcid;
+        let pcid = self.cmap.get(&cid).or_range()?.pcid;
         assert_ne!(pcid, crate::chain::CID_NONE);
         self.load_chain(pcid, how)?;
         Ok(pcid)
@@ -305,7 +286,7 @@ impl Hammer2 {
         };
         // Recurse parent upward if necessary until the parent completely
         // encloses the key range or we hit the inode.
-        let mut pchain = get_chain!(self, &pcid);
+        let mut pchain = self.cmap.get(&pcid).or_range()?;
         while pchain.bref.is_node_type() {
             let scan_beg = pchain.bref.key;
             let scan_end = scan_beg + (1 << pchain.bref.keybits) - 1;
@@ -314,7 +295,7 @@ impl Hammer2 {
                 break;
             }
             let pcid = self.repparent_chain(pchain.cid, how_maybe)?;
-            pchain = get_chain!(self, &pcid);
+            pchain = self.cmap.get(&pcid).or_range()?;
         }
         let mut pcid = pchain.cid;
         assert_ne!(pcid, crate::chain::CID_NONE);
@@ -344,7 +325,7 @@ impl Hammer2 {
         how_maybe: u32,
         how: u32,
     ) -> crate::Result<(crate::chain::Cid, crate::chain::Cid, u64, u64)> {
-        let pchain = get_chain!(self, &pcid);
+        let pchain = self.cmap.get(&pcid).or_range()?;
         if pchain.bref.typ == crate::fs::HAMMER2_BREF_TYPE_INODE {
             // Special shortcut for embedded data returns the inode
             // itself.  Callers must detect this condition and access
@@ -353,10 +334,15 @@ impl Hammer2 {
             // This is only applicable to regular files and softlinks.
             if pchain.as_inode_data().meta.has_direct_data() {
                 self.load_chain(pcid, RESOLVE_ALWAYS)?;
-                return Ok((pcid, get_chain!(self, &pcid).cid, key_end + 1, u64::MAX));
+                return Ok((
+                    pcid,
+                    self.cmap.get(&pcid).or_range()?.cid,
+                    key_end + 1,
+                    u64::MAX,
+                ));
             }
         }
-        get_chain_mut!(self, &pcid).count_blockref()?;
+        self.cmap.get_mut(&pcid).or_range()?.count_blockref()?;
         // Combined search.
         let (cid, i, key_next) = self.combined_find_chain(pcid, key_beg, key_end)?;
         // Exhausted parent chain, iterate.
@@ -365,7 +351,7 @@ impl Hammer2 {
             if key_beg == key_end {
                 return Ok((pcid, crate::chain::CID_NONE, key_next, u64::MAX));
             }
-            let pchain = get_chain!(self, &pcid);
+            let pchain = self.cmap.get(&pcid).or_range()?;
             // Stop if we reached the end of the iteration.
             if !pchain.bref.is_node_type() {
                 return Ok((pcid, crate::chain::CID_NONE, key_next, u64::MAX));
@@ -385,7 +371,7 @@ impl Hammer2 {
         }
         let cid = if cid == crate::chain::CID_NONE {
             // Selected from blockref.
-            let bref = *get_chain!(self, &pcid).as_blockref()?[i];
+            let bref = *self.cmap.get(&pcid).or_range()?.as_blockref()?[i];
             if bref.is_node_type() {
                 self.set_chain(pcid, &bref, how_maybe)
             } else {
@@ -393,18 +379,21 @@ impl Hammer2 {
             }?
         } else {
             // Selected from in-memory chain.
-            if get_chain!(self, &cid).bref.is_node_type() {
+            if self.cmap.get(&cid).or_range()?.bref.is_node_type() {
                 self.load_chain(cid, how_maybe)?;
             } else {
                 self.load_chain(cid, how)?;
             }
-            assert_eq!(get_chain!(self, &cid).pcid, get_chain!(self, &pcid).cid);
+            assert_eq!(
+                self.cmap.get(&cid).or_range()?.pcid,
+                self.cmap.get(&pcid).or_range()?.cid
+            );
             cid
         };
         assert_ne!(cid, crate::chain::CID_NONE);
         // If the chain element is an indirect block it becomes the new
         // parent and we loop on it.
-        if get_chain!(self, &cid).bref.is_node_type() {
+        if self.cmap.get(&cid).or_range()?.bref.is_node_type() {
             return Ok((cid, crate::chain::CID_NONE, u64::MAX, key_beg));
         }
         Ok((pcid, cid, key_next, u64::MAX))
@@ -418,7 +407,7 @@ impl Hammer2 {
         key_end: u64,
         flags: u32,
     ) -> crate::Result<(crate::chain::Cid, crate::chain::Cid, u64)> {
-        let pchain = get_chain!(self, &pcid);
+        let pchain = self.cmap.get(&pcid).or_range()?;
         // Calculate the next index and recalculate the parent if necessary.
         let (pcid, key_beg) = if cid != crate::chain::CID_NONE {
             // chain invalid past this point, but we can still do a
@@ -429,7 +418,7 @@ impl Hammer2 {
             if cid == pcid {
                 return Ok((pcid, crate::chain::CID_NONE, u64::MAX));
             }
-            let chain = get_chain!(self, &cid);
+            let chain = self.cmap.get(&cid).or_range()?;
             let key_beg = chain.bref.key + (1 << chain.bref.keybits);
             if key_beg == 0 || key_beg > key_end {
                 return Ok((pcid, crate::chain::CID_NONE, u64::MAX));
@@ -460,7 +449,7 @@ impl Hammer2 {
         key_beg: u64,
         key_end: u64,
     ) -> nix::Result<(u64, usize, u64)> {
-        let pchain = get_chain_mut!(self, &pcid);
+        let pchain = self.cmap.get_mut(&pcid).or_nix_range()?;
         // Lookup in block array.
         let (i, key_next) = pchain.find_blockref(key_end + 1, key_beg)?;
         // Lookup in chain.
@@ -561,7 +550,7 @@ impl Hammer2 {
             }
             depth -= 1;
         }
-        let chain = get_chain!(self, &cid);
+        let chain = self.cmap.get(&cid).or_nix_range()?;
         let filename = if chain.bref.typ == crate::fs::HAMMER2_BREF_TYPE_INODE && chain.has_data() {
             Some(
                 chain
@@ -615,7 +604,7 @@ impl Hammer2 {
             }
             depth -= 1;
         }
-        let chain = get_chain!(self, &cid);
+        let chain = self.cmap.get(&cid).or_nix_range()?;
         let indent = " ".repeat(tab);
         println!(
             "{indent}{} #{} [{}] \"{}\" {:08x} {}/{}",
@@ -669,7 +658,7 @@ impl Hammer2 {
 
     fn set_inode(&mut self, inum: u64) -> nix::Result<bool> {
         if self.nmap.contains_key(&inum) {
-            let ip = get_inode!(self, &inum);
+            let ip = self.nmap.get(&inum).or_nix_range()?;
             assert_eq!(ip.meta.inum, inum);
             if ip.cid == crate::chain::CID_NONE {
                 return Err(nix::errno::Errno::EINVAL);
@@ -684,12 +673,12 @@ impl Hammer2 {
     }
 
     fn set_inode_from_xop(&mut self, head: &crate::xop::XopHeader) -> nix::Result<(u64, bool)> {
-        let chain = get_chain!(self, &head.collect()?);
+        let chain = self.cmap.get(&head.collect()?).or_nix_range()?;
         assert_eq!(chain.bref.typ, crate::fs::HAMMER2_BREF_TYPE_INODE);
         let ipdata = chain.as_inode_data();
         let inum = ipdata.meta.inum;
         if self.nmap.contains_key(&inum) {
-            let ip = get_inode_mut!(self, &inum);
+            let ip = self.nmap.get_mut(&inum).or_nix_range()?;
             assert_eq!(ip.meta.inum, inum);
             if ip.cid == crate::chain::CID_NONE || ip.cid != chain.cid {
                 return Err(nix::errno::Errno::EINVAL);
@@ -703,7 +692,7 @@ impl Hammer2 {
 
     /// # Errors
     pub fn get_inode_chain(&mut self, inum: u64, how: u32) -> crate::Result<crate::chain::Cid> {
-        let cid = get_inode!(self, &inum).cid;
+        let cid = self.nmap.get(&inum).or_range()?.cid;
         if cid != crate::chain::CID_NONE {
             self.load_chain(cid, how)?;
         }
@@ -715,11 +704,11 @@ impl Hammer2 {
         inum: u64,
         how: u32,
     ) -> crate::Result<(crate::chain::Cid, crate::chain::Cid)> {
-        let cid = get_inode!(self, &inum).cid;
+        let cid = self.nmap.get(&inum).or_range()?.cid;
         if cid != crate::chain::CID_NONE {
             self.load_chain(cid, how)?;
         }
-        let pcid = get_chain!(self, &cid).pcid;
+        let pcid = self.cmap.get(&cid).or_range()?.pcid;
         if pcid != crate::chain::CID_NONE {
             self.load_chain(pcid, how)?;
         }
@@ -742,7 +731,7 @@ impl Hammer2 {
         }
         let (pcid, cid, _) = self.lookup_chain(pcid, inum, inum, 0)?;
         if cid != crate::chain::CID_NONE {
-            let chain = get_chain!(self, &cid);
+            let chain = self.cmap.get(&cid).or_range()?;
             if chain.has_data() {
                 let ipdata = chain.as_inode_data();
                 if inum != ipdata.meta.inum {
@@ -757,11 +746,17 @@ impl Hammer2 {
         Ok((pcid, cid))
     }
 
-    #[must_use]
-    pub fn get_inode_embed_stats(&self, inum: u64) -> &crate::fs::Hammer2BlockrefEmbedStats {
-        get_chain!(self, &get_inode!(self, &inum).cid)
+    /// # Errors
+    pub fn get_inode_embed_stats(
+        &self,
+        inum: u64,
+    ) -> nix::Result<&crate::fs::Hammer2BlockrefEmbedStats> {
+        Ok(self
+            .cmap
+            .get(&self.nmap.get(&inum).or_nix_range()?.cid)
+            .or_nix_range()?
             .bref
-            .embed_as::<crate::fs::Hammer2BlockrefEmbedStats>()
+            .embed_as::<crate::fs::Hammer2BlockrefEmbedStats>())
     }
 
     fn xop_nresolve(&mut self, arg: &mut crate::xop::XopNresolve) -> crate::Result<()> {
@@ -777,7 +772,7 @@ impl Hammer2 {
             LOOKUP_ALWAYS,
         )?;
         while cid != crate::chain::CID_NONE {
-            let chain = get_chain!(self, &cid);
+            let chain = self.cmap.get(&cid).or_range()?;
             if chain.match_name(&arg.head.name1) {
                 break;
             }
@@ -789,7 +784,7 @@ impl Hammer2 {
             )?;
         }
         if cid != crate::chain::CID_NONE {
-            let chain = get_chain!(self, &cid);
+            let chain = self.cmap.get(&cid).or_range()?;
             if chain.bref.typ == crate::fs::HAMMER2_BREF_TYPE_DIRENT {
                 let lhc = chain.bref.embed_as::<crate::fs::Hammer2DirentHead>().inum;
                 (_, cid) = self.find_inode_chain(lhc)?;
@@ -829,7 +824,7 @@ impl Hammer2 {
         if cid == crate::chain::CID_NONE {
             return Err(nix::errno::Errno::ENOENT.into());
         }
-        arg.offset = get_chain!(self, &cid).bref.data_off;
+        arg.offset = self.cmap.get(&cid).or_range()?.bref.data_off;
         arg.head.feed(cid);
         Ok(())
     }
@@ -841,10 +836,10 @@ impl Hammer2 {
         }
         let (_, cid, _) = self.lookup_chain(pcid, arg.lbase, arg.lbase, LOOKUP_ALWAYS)?;
         if cid == crate::chain::CID_NONE {
-            return Ok(vec![0; crate::fs::HAMMER2_PBUFSIZE.try_into().unwrap()]);
+            return Ok(vec![0; crate::fs::HAMMER2_PBUFSIZE.try_into().or_range()?]);
         }
         arg.head.feed(cid);
-        let chain = get_chain_mut!(self, &arg.head.collect()?);
+        let chain = self.cmap.get_mut(&arg.head.collect()?).or_range()?;
         Ok(if self.opt.nodatacache {
             chain.read_data()
         } else {
@@ -873,7 +868,7 @@ impl Hammer2 {
         }
         match cnp {
             "." => Ok(dinum),
-            ".." => Ok(get_inode!(self, &dinum).meta.iparent),
+            ".." => Ok(self.nmap.get(&dinum).or_range()?.meta.iparent),
             _ => {
                 let mut arg = crate::xop::XopNresolve::new(dinum, cnp);
                 self.xop_nresolve(&mut arg)?;
@@ -885,7 +880,7 @@ impl Hammer2 {
 
     /// # Errors
     pub fn readdir(&mut self, dinum: u64) -> crate::Result<Vec<Dirent>> {
-        let ip = get_inode!(self, &dinum);
+        let ip = self.nmap.get(&dinum).or_range()?;
         if ip.meta.typ != crate::fs::HAMMER2_OBJTYPE_DIRECTORY {
             return Err(nix::errno::Errno::ENOTDIR.into());
         }
@@ -905,7 +900,7 @@ impl Hammer2 {
             Err(e) => return Err(e.into()),
         };
         for cid in &dirents {
-            let chain = get_chain!(self, &cid);
+            let chain = self.cmap.get(cid).or_range()?;
             match chain.bref.typ {
                 crate::fs::HAMMER2_BREF_TYPE_INODE => {
                     let ipdata = chain.as_inode_data();
@@ -948,13 +943,13 @@ impl Hammer2 {
         }
         assert_ne!(arg.offset, crate::fs::HAMMER2_OFF_MASK);
         assert_ne!(arg.offset, NOOFFSET);
-        assert_ne!(crate::extra::conv_offset_to_radix(arg.offset), 0);
+        assert_ne!(crate::extra::conv_offset_to_radix(arg.offset)?, 0);
         Ok(arg.offset)
     }
 
     /// # Errors
     pub fn readlink(&mut self, inum: u64, buf: &mut [u8]) -> crate::Result<u64> {
-        let ip = get_inode!(self, &inum);
+        let ip = self.nmap.get(&inum).or_range()?;
         if ip.meta.typ != crate::fs::HAMMER2_OBJTYPE_SOFTLINK {
             return Err(nix::errno::Errno::EINVAL.into());
         }
@@ -963,7 +958,7 @@ impl Hammer2 {
 
     /// # Errors
     pub fn pread(&mut self, inum: u64, buf: &mut [u8], offset: u64) -> crate::Result<u64> {
-        let ip = get_inode!(self, &inum);
+        let ip = self.nmap.get(&inum).or_range()?;
         if ip.meta.typ == crate::fs::HAMMER2_OBJTYPE_DIRECTORY {
             return Err(nix::errno::Errno::EISDIR.into());
         }
@@ -975,17 +970,17 @@ impl Hammer2 {
 
     fn pread_impl(&mut self, inum: u64, buf: &mut [u8], offset: u64) -> crate::Result<u64> {
         let mut buf = buf;
-        let mut resid = buf.len().try_into().unwrap();
+        let mut resid = buf.len().try_into().or_range()?;
         let start_offset = offset;
         let mut offset = offset;
         let mut total = 0;
-        let ipsize = get_inode!(self, &inum).meta.size;
+        let ipsize = self.nmap.get(&inum).or_range()?.meta.size;
 
         while resid > 0 && offset < ipsize {
             let lbase = offset & !crate::fs::HAMMER2_PBUFMASK;
             let mut arg = crate::xop::XopRead::new(inum, lbase);
             let b = self.xop_read(&mut arg)?;
-            assert!(b.len() <= crate::fs::HAMMER2_PBUFSIZE.try_into().unwrap());
+            assert!(b.len() <= crate::fs::HAMMER2_PBUFSIZE.try_into().or_range()?);
             let loff = offset - lbase;
             let mut n = crate::fs::HAMMER2_PBUFSIZE - loff;
             if n > resid {
@@ -994,8 +989,8 @@ impl Hammer2 {
             if n > ipsize - offset {
                 n = ipsize - offset;
             }
-            let i = loff.try_into().unwrap();
-            let x = n.try_into().unwrap();
+            let i = loff.try_into().or_range()?;
+            let x = n.try_into().or_range()?;
             buf[..x].copy_from_slice(&b[i..i + x]);
             buf = &mut buf[x..];
             total += n;
@@ -1008,7 +1003,7 @@ impl Hammer2 {
 
     fn init_vchain(&mut self) -> nix::Result<()> {
         let mut bref = crate::fs::Hammer2Blockref::new(crate::fs::HAMMER2_BREF_TYPE_VOLUME);
-        bref.data_off = crate::fs::HAMMER2_PBUFRADIX.try_into().unwrap();
+        bref.data_off = crate::fs::HAMMER2_PBUFRADIX.try_into().or_nix_range()?;
         bref.mirror_tid = self.voldata.mirror_tid;
         bref.modify_tid = bref.mirror_tid;
 
@@ -1030,7 +1025,7 @@ impl Hammer2 {
 
     fn init_fchain(&mut self) -> nix::Result<()> {
         let mut bref = crate::fs::Hammer2Blockref::new(crate::fs::HAMMER2_BREF_TYPE_FREEMAP);
-        bref.data_off = crate::fs::HAMMER2_PBUFRADIX.try_into().unwrap();
+        bref.data_off = crate::fs::HAMMER2_PBUFRADIX.try_into().or_nix_range()?;
         bref.mirror_tid = self.voldata.mirror_tid;
         bref.modify_tid = bref.mirror_tid;
         bref.methods = crate::fs::enc_check(crate::fs::HAMMER2_CHECK_FREEMAP)
@@ -1053,7 +1048,7 @@ impl Hammer2 {
     }
 
     fn init_sup_root_inode(&mut self, cid: crate::chain::Cid) -> nix::Result<()> {
-        let chain = get_chain!(self, &cid);
+        let chain = self.cmap.get(&cid).or_nix_range()?;
         log::debug!("{}", chain.as_inode_data());
         let (inum, exists) =
             self.set_inode_from_xop(&crate::xop::XopHeader::dummy_new(chain.cid))?;
@@ -1064,13 +1059,16 @@ impl Hammer2 {
     }
 
     fn init_pfs_root_inode(&mut self, cid: crate::chain::Cid) -> nix::Result<()> {
-        let chain = get_chain!(self, &cid);
+        let chain = self.cmap.get(&cid).or_nix_range()?;
         let ipdata = chain.as_inode_data();
         let meta = ipdata.meta;
         log::debug!("{ipdata}");
         assert!(!self.set_inode(ipdata.meta.inum)?);
         assert!(self.nmap.contains_key(&crate::inode::INUM_PFS_ROOT));
-        let ip = get_inode_mut!(self, &crate::inode::INUM_PFS_ROOT);
+        let ip = self
+            .nmap
+            .get_mut(&crate::inode::INUM_PFS_ROOT)
+            .or_nix_range()?;
         ip.meta = meta;
         ip.cid = cid;
         Ok(())
@@ -1106,7 +1104,7 @@ impl Hammer2 {
 
         // Allocate PFS.
         let mut pmp = Self::new(fso, opt)?;
-        if !pmp.voldata.is_hbo() {
+        if !pmp.voldata.is_hbo()? {
             log::error!("reverse-endian not supported");
             return Err(nix::errno::Errno::EINVAL.into());
         }
@@ -1117,7 +1115,7 @@ impl Hammer2 {
                 let n = x.div_ceil(libfs::bitmap::BLOCK_BITS) * libfs::bitmap::BLOCK_BITS;
                 log::debug!("imap: {} bits, {} bytes", n, n / 8);
                 pmp.imap.chunk = libfs::bitmap::Bitmap::new(n)?;
-                (n - 1).try_into().unwrap()
+                (n - 1).try_into().or_range()?
             }
         };
         pmp.init_vchain()?;
@@ -1130,7 +1128,7 @@ impl Hammer2 {
         //
         // Then locate the root inode by scanning the directory keyspace
         // represented by the label.
-        let chain = get_chain!(pmp, &crate::chain::CID_VCHAIN);
+        let chain = pmp.cmap.get(&crate::chain::CID_VCHAIN).or_range()?;
         let cid = chain.cid;
         pmp.load_chain(cid, RESOLVE_ALWAYS)?;
         let (_, cid, _) = pmp.lookup_chain(
@@ -1155,7 +1153,7 @@ impl Hammer2 {
             0,
         )?;
         while cid != crate::chain::CID_NONE {
-            let chain = get_chain!(pmp, &cid);
+            let chain = pmp.cmap.get(&cid).or_range()?;
             if chain.bref.typ != crate::fs::HAMMER2_BREF_TYPE_INODE {
                 log::error!("non inode chain under super-root: {}", chain.bref);
                 return Err(nix::errno::Errno::EINVAL.into());
@@ -1170,7 +1168,7 @@ impl Hammer2 {
         let (mut pcid, mut cid, _) =
             pmp.lookup_chain(pcid, lhc, lhc + crate::fs::HAMMER2_DIRHASH_LOMASK, 0)?;
         while cid != crate::chain::CID_NONE {
-            let chain = get_chain!(pmp, &cid);
+            let chain = pmp.cmap.get(&cid).or_range()?;
             if chain.bref.typ == crate::fs::HAMMER2_BREF_TYPE_INODE {
                 match chain.as_inode_data().get_filename_string() {
                     Ok(s) => {
@@ -1231,7 +1229,6 @@ impl Hammer2 {
     }
 
     /// # Errors
-    /// # Panics
     pub fn stat(&self, inum: u64) -> crate::Result<Stat> {
         let Some(ip) = self.nmap.get(&inum) else {
             return Err(nix::errno::Errno::ENOENT.into());
@@ -1249,13 +1246,13 @@ impl Hammer2 {
         Ok(Stat {
             st_dev: 0,
             st_ino: ip.meta.inum,
-            st_nlink: ip.meta.nlinks.try_into().unwrap(),
-            st_mode: StatMode::try_from(ip.meta.mode).unwrap() | mode,
+            st_nlink: ip.meta.nlinks.try_into().or_range()?,
+            st_mode: StatMode::try_from(ip.meta.mode).or_range()? | mode,
             st_uid: crate::subs::conv_uuid_to_unix_xid_from_bytes(&ip.meta.uid),
             st_gid: crate::subs::conv_uuid_to_unix_xid_from_bytes(&ip.meta.gid),
             st_rdev: 0,
             st_size: ip.meta.size,
-            st_blksize: crate::fs::HAMMER2_PBUFSIZE.try_into().unwrap(),
+            st_blksize: crate::fs::HAMMER2_PBUFSIZE.try_into().or_range()?,
             st_blocks: if ip.meta.typ == crate::fs::HAMMER2_OBJTYPE_DIRECTORY {
                 crate::fs::HAMMER2_INODE_BYTES
             } else {
@@ -1268,28 +1265,32 @@ impl Hammer2 {
     }
 
     /// # Errors
-    /// # Panics
     pub fn statfs(&mut self) -> crate::Result<StatFs> {
         let cid = self.get_inode_chain(crate::inode::INUM_PFS_ROOT, RESOLVE_MAYBE)?;
         let bsize = crate::fs::HAMMER2_PBUFSIZE;
         Ok(StatFs {
-            f_bsize: bsize.try_into().unwrap(),
+            f_bsize: bsize.try_into().or_range()?,
             f_blocks: self.voldata.allocator_size / bsize,
             f_bfree: self.voldata.allocator_free / bsize,
             f_bavail: self.voldata.allocator_free / bsize,
-            f_files: get_chain!(self, &cid)
+            f_files: self
+                .cmap
+                .get(&cid)
+                .or_range()?
                 .bref
                 .embed_as::<crate::fs::Hammer2BlockrefEmbedStats>()
                 .inode_count,
             f_ffree: 0,
             f_namelen: 0,
-            f_frsize: bsize.try_into().unwrap(),
+            f_frsize: bsize.try_into().or_range()?,
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::ErrorExt;
+
     const HAMMER2_NODATACACHE: &str = "HAMMER2_NODATACACHE"; // option
     const HAMMER2_DEBUG: &str = "HAMMER2_DEBUG"; // option
     const HAMMER2_DEVICE: &str = "HAMMER2_DEVICE";
@@ -1308,7 +1309,7 @@ mod tests {
         let mut v = vec![];
         while resid > 0 {
             let b = pmp.preadx(inum, size, offset)?;
-            let n = u64::try_from(b.len()).unwrap();
+            let n = u64::try_from(b.len()).or_range()?;
             v.extend(b);
             offset += n;
             resid -= n;
@@ -1345,7 +1346,13 @@ mod tests {
                             libc::S_IFREG => {
                                 let (sum1, is_zero1) = match pmp.read_all(inum) {
                                     Ok(v) => {
-                                        assert_eq!(v.len(), st.st_size.try_into().unwrap());
+                                        assert_eq!(
+                                            v.len(),
+                                            match st.st_size.try_into() {
+                                                Ok(v) => v,
+                                                Err(e) => panic!("{e}"),
+                                            }
+                                        );
                                         match libfs::string::b2s(&v) {
                                             Ok(v) => println!("{v}"),
                                             Err(e) => panic!("{e}"),
@@ -1357,7 +1364,13 @@ mod tests {
                                 log::info!("sha256: {sum1}");
                                 let (sum2, is_zero2) = match read_all(pmp, inum) {
                                     Ok(v) => {
-                                        assert_eq!(v.len(), st.st_size.try_into().unwrap());
+                                        assert_eq!(
+                                            v.len(),
+                                            match st.st_size.try_into() {
+                                                Ok(v) => v,
+                                                Err(e) => panic!("{e}"),
+                                            }
+                                        );
                                         match libfs::string::b2s(&v) {
                                             Ok(v) => println!("{v}"),
                                             Err(e) => panic!("{e}"),
@@ -1377,7 +1390,13 @@ mod tests {
                             libc::S_IFLNK => match pmp.readlinkx(inum) {
                                 Ok(v) => {
                                     log::info!("\"{v}\"");
-                                    assert_eq!(v.len(), st.st_size.try_into().unwrap());
+                                    assert_eq!(
+                                        v.len(),
+                                        match st.st_size.try_into() {
+                                            Ok(v) => v,
+                                            Err(e) => panic!("{e}"),
+                                        }
+                                    );
                                     match pmp.bmap(inum, 0) {
                                         Ok(v) => log::info!("{v:016x}"),
                                         Err(e) => panic!("{e}"),

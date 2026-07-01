@@ -42,7 +42,7 @@ pub const HAMMER2_ZONE_FREEMAP_05: usize = 26; // normal freemap rotation
 pub const HAMMER2_ZONE_FREEMAP_06: usize = 31; // normal freemap rotation
 pub const HAMMER2_ZONE_FREEMAP_07: usize = 36; // normal freemap rotation
 pub const HAMMER2_ZONE_FREEMAP_END: usize = 41; // non-inclusive
-                                                // zone 41-63 unused
+// zone 41-63 unused
 pub const HAMMER2_ZONE_END: usize = 64; // non-inclusive
 
 pub const HAMMER2_FREEMAP_LEVEL6_RADIX: usize = 64; // 16EB (end)
@@ -69,6 +69,7 @@ pub const HAMMER2_FREEMAP_LEVEL2_MASK: u64 = HAMMER2_FREEMAP_LEVEL2_SIZE - 1;
 pub const HAMMER2_FREEMAP_LEVEL1_MASK: u64 = HAMMER2_FREEMAP_LEVEL1_SIZE - 1;
 pub const HAMMER2_FREEMAP_LEVEL0_MASK: u64 = HAMMER2_FREEMAP_LEVEL0_SIZE - 1;
 
+#[allow(clippy::cast_possible_truncation)]
 pub const HAMMER2_FREEMAP_COUNT: usize =
     HAMMER2_FREEMAP_LEVELN_PSIZE as usize / std::mem::size_of::<Hammer2BmapData>();
 
@@ -384,6 +385,7 @@ impl Hammer2InodeMeta {
     }
 }
 
+#[allow(clippy::cast_possible_truncation)]
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct Hammer2InodeData {
@@ -404,6 +406,7 @@ impl Hammer2InodeData {
         Self {
             meta: Hammer2InodeMeta::new(),
             filename: [0; HAMMER2_INODE_MAXNAME],
+            #[allow(clippy::cast_possible_truncation)]
             u: [0; HAMMER2_EMBEDDED_BYTES as usize],
         }
     }
@@ -555,7 +558,9 @@ impl Hammer2VolumeData {
             sector5: [0; 512],
             sector6: [0; 512],
             volu_loff: [0; HAMMER2_MAX_VOLUMES as usize],
+            #[allow(clippy::large_stack_arrays)]
             reserved_volconf: [0; 0x8000],
+            #[allow(clippy::large_stack_arrays)]
             reserved9000: [0; 0x6FFC],
             icrc_volheader: 0,
         }

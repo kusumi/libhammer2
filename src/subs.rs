@@ -1,6 +1,7 @@
 use byteorder::ByteOrder;
 use std::os::unix::fs::FileTypeExt;
 
+#[allow(clippy::cast_possible_truncation)]
 pub(crate) const DEBUFSIZE: usize = crate::fs::HAMMER2_PBUFSIZE as usize;
 
 pub const K: usize = 1024;
@@ -8,15 +9,15 @@ pub const M: usize = K * 1024;
 pub const G: usize = M * 1024;
 pub const T: usize = G * 1024;
 
-pub const K_U64: u64 = K as u64;
-pub const M_U64: u64 = M as u64;
-pub const G_U64: u64 = G as u64;
-pub const T_U64: u64 = T as u64;
+pub const K_U64: u64 = 1024;
+pub const M_U64: u64 = K_U64 * 1024;
+pub const G_U64: u64 = M_U64 * 1024;
+pub const T_U64: u64 = G_U64 * 1024;
 
-pub const K_F64: f64 = K as f64;
-pub const M_F64: f64 = M as f64;
-pub const G_F64: f64 = G as f64;
-pub const T_F64: f64 = T as f64;
+pub const K_F64: f64 = 1024.0;
+pub const M_F64: f64 = K_F64 * 1024.0;
+pub const G_F64: f64 = M_F64 * 1024.0;
+pub const T_F64: f64 = G_F64 * 1024.0;
 
 fn is_le() -> bool {
     cfg!(target_endian = "little")
@@ -29,24 +30,42 @@ pub fn get_local_time_offset() -> Result<i64, time::error::IndeterminateOffset> 
     ))
 }
 
-/// # Panics
-#[must_use]
-pub fn get_local_time_string(t: u64) -> String {
-    get_time_string_impl(t, get_local_time_offset().unwrap()).unwrap()
+/// # Errors
+pub fn get_local_time_string(t: u64) -> crate::Result<String> {
+    let d = match get_local_time_offset() {
+        Ok(v) => v,
+        Err(e) => return Err(crate::Error::Dyn(Box::new(e))),
+    };
+    get_time_string_impl(t, d)
 }
 
-/// # Panics
-#[must_use]
-pub fn get_time_string(t: u64) -> String {
-    get_time_string_impl(t, 0).unwrap()
+/// # Errors
+pub fn get_time_string(t: u64) -> crate::Result<String> {
+    get_time_string_impl(t, 0)
 }
 
-fn get_time_string_impl(t: u64, d: i64) -> Result<String, Box<dyn std::error::Error>> {
-    let t = i64::try_from(t / 1_000_000)? + d;
-    let fmt = time::format_description::parse(
+fn get_time_string_impl(t: u64, d: i64) -> crate::Result<String> {
+    let t = match i64::try_from(t / 1_000_000) {
+        Ok(v) => v,
+        Err(e) => return Err(crate::Error::Dyn(Box::new(e))),
+    } + d;
+    let fmt = match time::format_description::parse_borrowed::<1>(
         "[day]-[month repr:short]-[year] [hour]:[minute]:[second]",
-    )?;
-    Ok(time::OffsetDateTime::from_unix_timestamp(t)?.format(&fmt)?)
+    ) {
+        Ok(v) => v,
+        Err(e) => return Err(crate::Error::Dyn(Box::new(e))),
+    };
+    Ok(
+        match match time::OffsetDateTime::from_unix_timestamp(t) {
+            Ok(v) => v,
+            Err(e) => return Err(crate::Error::Dyn(Box::new(e))),
+        }
+        .format(&fmt)
+        {
+            Ok(v) => v,
+            Err(e) => return Err(crate::Error::Dyn(Box::new(e))),
+        },
+    )
 }
 
 #[must_use]
@@ -154,6 +173,7 @@ pub fn get_comp_mode_string(x: u8) -> String {
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 #[must_use]
 pub fn get_size_string(size: u64) -> String {
     if size < K_U64 / 2 {
@@ -169,6 +189,7 @@ pub fn get_size_string(size: u64) -> String {
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 #[must_use]
 pub fn get_count_string(size: u64) -> String {
     if size < M_U64 / 2 {
@@ -332,8 +353,20 @@ pub(crate) fn conv_unix_xid_to_uuid_bytes(xid: u32) -> [u8; 16] {
 mod tests {
     #[test]
     fn test_get_time_string() {
-        assert_eq!(super::get_time_string(0), "01-Jan-1970 00:00:00");
-        assert_eq!(super::get_time_string(1_000_000), "01-Jan-1970 00:00:01");
+        assert_eq!(
+            match super::get_time_string(0) {
+                Ok(v) => v,
+                Err(e) => panic!("{e}"),
+            },
+            "01-Jan-1970 00:00:00"
+        );
+        assert_eq!(
+            match super::get_time_string(1_000_000) {
+                Ok(v) => v,
+                Err(e) => panic!("{e}"),
+            },
+            "01-Jan-1970 00:00:01"
+        );
     }
 
     #[test]
